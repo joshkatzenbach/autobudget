@@ -975,7 +975,11 @@ export class BudgetFormComponent implements OnInit {
     // Delete categories that were removed
     const currentCategoryIds = new Set(this.categories().filter(c => c.id).map(c => c.id));
     for (const existingCat of existingCategories || []) {
-      if (existingCat.id && existingCat.categoryType !== 'surplus' && !currentCategoryIds.has(existingCat.id)) {
+      // Don't try to delete system categories (Surplus, Excluded) - they're filtered out from UI but should remain
+      if (existingCat.id && 
+          existingCat.categoryType !== 'surplus' && 
+          existingCat.categoryType !== 'excluded' && 
+          !currentCategoryIds.has(existingCat.id)) {
         await this.budgetService.deleteBudgetCategory(existingCat.id).toPromise();
       }
     }

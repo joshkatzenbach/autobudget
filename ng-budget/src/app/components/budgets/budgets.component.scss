@@ -4,12 +4,63 @@
   padding: 20px;
 }
 
-.budget-summary {
+// Tab Navigation
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e0e0e0;
+  margin: 0;
   background: white;
-  border-radius: 12px;
+  padding: 0 20px;
+
+  .tab-button {
+    padding: 12px 24px;
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 500;
+    color: #666;
+    transition: all 0.2s;
+    margin-bottom: -2px;
+
+    &:hover {
+      color: #333;
+      background: #f5f5f5;
+    }
+
+    &.active {
+      color: #667eea;
+      border-bottom-color: #667eea;
+      font-weight: 600;
+    }
+  }
+}
+
+// Tab Content
+.tab-content {
+  background: white;
+  border-radius: 0 0 12px 12px;
   padding: 20px;
-  margin-bottom: 30px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  min-height: 400px;
+}
+
+.summary-tab {
+  // Summary tab specific styles can go here
+}
+
+.transactions-tab {
+  // Transactions tab specific styles can go here
+}
+
+.budget-summary {
+  background: transparent;
+  border-radius: 0;
+  padding: 20px 0;
+  margin-bottom: 30px;
+  box-shadow: none;
 
   .budget-details {
     display: flex;
@@ -34,11 +85,11 @@
 }
 
 .transactions-section {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 30px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  margin-bottom: 0;
+  box-shadow: none;
 
   h2 {
     margin: 0 0 20px 0;
@@ -408,11 +459,11 @@
 }
 
 .balance-snapshot {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
+  background: transparent;
+  border-radius: 0;
+  padding: 0 0 30px 0;
   margin-bottom: 30px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
 
   .balance-header {
     display: flex;
@@ -681,17 +732,25 @@
 }
 
 .header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: white;
   margin-bottom: 30px;
-  padding-bottom: 20px;
-  border-bottom: 2px solid #eee;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 
-  h1 {
-    margin: 0;
-    color: #333;
-    font-size: 32px;
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    border-bottom: 2px solid #eee;
+
+    h1 {
+      margin: 0;
+      color: #333;
+      font-size: 32px;
+    }
   }
 }
 

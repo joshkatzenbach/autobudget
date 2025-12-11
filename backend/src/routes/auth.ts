@@ -12,6 +12,12 @@ router.post('/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
     // Check if user already exists
     const existingUser = await findUserByEmail(email);
     if (existingUser) {
@@ -30,8 +36,12 @@ router.post('/register', async (req: Request, res: Response) => {
       },
       token: session.token,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Registration error:', error);
+    // If error is from password validation, return 400 with specific message
+    if (error.message && error.message.includes('Password')) {
+      return res.status(400).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to register user' });
   }
 });

@@ -2,8 +2,15 @@ import { db } from '../db';
 import { users, sessions } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { hashPassword, comparePassword, generateSessionToken, getSessionExpirationDate } from '../utils/auth';
+import { validatePasswordStrength } from '../utils/password-validation';
 
 export async function createUser(email: string, password: string, firstName?: string, lastName?: string) {
+  // Validate password strength
+  const passwordValidation = validatePasswordStrength(password);
+  if (!passwordValidation.isValid) {
+    throw new Error(passwordValidation.errors.join('; '));
+  }
+
   const passwordHash = await hashPassword(password);
   
   const [user] = await db

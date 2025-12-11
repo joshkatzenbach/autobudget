@@ -184,3 +184,19 @@ export async function syncTransactionsForItem(
   }
 }
 
+export async function removeItem(accessToken: string) {
+  try {
+    const response = await plaidClient.itemRemove({
+      access_token: accessToken,
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error('Error removing Plaid item:', error);
+    // Log more details if available
+    if (error.response?.data) {
+      console.error('Plaid error details:', JSON.stringify(error.response.data, null, 2));
+    }
+    throw error;
+  }
+}
+

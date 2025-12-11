@@ -1,5 +1,6 @@
 import express, { Response, Request } from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { verifyPlaidWebhook } from '../middleware/webhook-verification';
 import { db } from '../db';
 import { plaidItems, plaidAccounts, plaidTransactions, budgets } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -11,14 +12,16 @@ import {
   getInstitution,
   getAccountBalances,
   syncTransactionsForItem,
+  removeItem,
 } from '../services/plaid';
 import { storeTransaction, assignTransactionCategory } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
+import { encrypt, decrypt } from '../utils/encryption';
 
 const router = express.Router();
 
-// Webhook endpoint (public, no auth required)
-router.post('/webhook', async (req: Request, res: Response) => {
+// Webhook endpoint (public, but requires webhook verification)
+router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) => {
   try {
     const { webhook_type, item_id, new_transactions } = req.body;
 
@@ -47,9 +50,12 @@ router.post('/webhook', async (req: Request, res: Response) => {
       const startDateStr = startDate.toISOString().split('T')[0];
       const endDateStr = endDate.toISOString().split('T')[0];
 
+      // Decrypt access token before using
+      const decryptedAccessToken = decrypt(plaidItem.accessToken);
+      
       // Fetch new transactions
       const transactions = await syncTransactionsForItem(
-        plaidItem.accessToken,
+        decryptedAccessToken,
         plaidItem.userId,
         plaidItem.id,
         startDateStr,
@@ -205,13 +211,16 @@ router.post('/item/public_token/exchange', async (req: AuthRequest, res: Respons
       ? await getInstitution(item.institution_id)
       : null;
 
+    // Encrypt access token before storing
+    const encryptedAccessToken = encrypt(accessToken);
+    
     // Store Plaid item in database
     const [plaidItem] = await db
       .insert(plaidItems)
       .values({
         userId: req.userId,
         itemId: itemId,
-        accessToken: accessToken, // In production, encrypt this
+        accessToken: encryptedAccessToken,
         institutionId: item.institution_id || null,
         institutionName: institution?.name || null,
       })
@@ -352,7 +361,19 @@ router.delete('/item/:itemId', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Item not found' });
     }
 
-    // Delete item (cascade will delete accounts)
+    // Revoke access token with Plaid before deleting from database
+    try {
+      const decryptedAccessToken = decrypt(item.accessToken);
+      await removeItem(decryptedAccessToken);
+      console.log(`Successfully revoked Plaid access token for item ${itemId}`);
+    } catch (error: any) {
+      // Log error but continue with database deletion
+      // The token might already be invalid, or there might be a network issue
+      console.error(`Error revoking Plaid access token for item ${itemId}:`, error);
+      console.warn('Continuing with database deletion despite Plaid revocation error');
+    }
+
+    // Delete item from database (cascade will delete accounts)
     await db.delete(plaidItems).where(eq(plaidItems.id, itemId));
 
     res.json({ message: 'Item deleted successfully' });
@@ -382,7 +403,9 @@ router.get('/balance-snapshot', async (req: AuthRequest, res: Response) => {
     // For each item, get account balances
     for (const item of items) {
       try {
-        const balances = await getAccountBalances(item.accessToken);
+        // Decrypt access token before using
+        const decryptedAccessToken = decrypt(item.accessToken);
+        const balances = await getAccountBalances(decryptedAccessToken);
         
         for (const account of balances) {
           const balance = account.balances?.current || 0;

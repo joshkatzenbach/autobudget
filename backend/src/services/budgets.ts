@@ -1,6 +1,6 @@
 import { db } from '../db';
-import { budgets, budgetCategories, budgetCategorySubcategories, plaidItems, plaidTransactions } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { budgets, budgetCategories, budgetCategorySubcategories, plaidItems, plaidTransactions, transactionCategories } from '../db/schema';
+import { eq, and, gte, lte, sql } from 'drizzle-orm';
 import { syncTransactionsForItem } from './plaid';
 import { storeTransaction, assignTransactionCategory } from './transactions';
 import { categorizeTransaction } from './categorization';
@@ -223,6 +223,43 @@ export async function createBudgetCategory(
   return category;
 }
 
+// Calculate current month's spending for each category
+async function calculateCategorySpending(budgetId: number, userId: number): Promise<Map<number, number>> {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const startDate = startOfMonth.toISOString().split('T')[0];
+  const endDate = endOfMonth.toISOString().split('T')[0];
+
+  // Get all transactions for the current month with their category assignments
+  // Only include categories that belong to this budget
+  // Use ABS() to handle negative transaction amounts (Plaid uses negative for outflows)
+  const spendingData = await db
+    .select({
+      categoryId: transactionCategories.categoryId,
+      amount: sql<string>`SUM(ABS(CAST(${transactionCategories.amount} AS NUMERIC)))`.as('total'),
+    })
+    .from(transactionCategories)
+    .innerJoin(plaidTransactions, eq(transactionCategories.transactionId, plaidTransactions.id))
+    .innerJoin(budgetCategories, eq(transactionCategories.categoryId, budgetCategories.id))
+    .where(
+      and(
+        eq(plaidTransactions.userId, userId),
+        eq(budgetCategories.budgetId, budgetId),
+        gte(plaidTransactions.date, startDate),
+        lte(plaidTransactions.date, endDate)
+      )
+    )
+    .groupBy(transactionCategories.categoryId);
+
+  const spendingMap = new Map<number, number>();
+  for (const row of spendingData) {
+    spendingMap.set(row.categoryId, parseFloat(row.amount) || 0);
+  }
+
+  return spendingMap;
+}
+
 export async function getBudgetCategories(userId: number) {
   // Get user's budget ID
   const budgetId = await getUserBudgetId(userId);
@@ -238,14 +275,25 @@ export async function getBudgetCategories(userId: number) {
     .from(budgetCategories)
     .where(eq(budgetCategories.budgetId, budgetId));
 
-  // Fetch subcategories for each category
+  // Calculate current month's spending for each category
+  const spendingMap = await calculateCategorySpending(budgetId, userId);
+
+  // Fetch subcategories for each category and update spentAmount
   const categoriesWithSubcategories = await Promise.all(
     categories.map(async (category) => {
       const subcategories = await db
         .select()
         .from(budgetCategorySubcategories)
         .where(eq(budgetCategorySubcategories.categoryId, category.id));
-      return { ...category, subcategories };
+      
+      // Update spentAmount from calculated spending
+      const spentAmount = spendingMap.get(category.id) || 0;
+      
+      return { 
+        ...category, 
+        subcategories,
+        spentAmount: spentAmount.toFixed(2)
+      };
     })
   );
 

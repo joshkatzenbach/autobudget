@@ -16,6 +16,7 @@ import { eq, and } from 'drizzle-orm';
 import { syncTransactionsForItem } from '../services/plaid';
 import { storeTransaction } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
+import { decrypt } from '../utils/encryption';
 
 const router = express.Router();
 
@@ -235,11 +236,13 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
     for (const item of items) {
       try {
         console.log(`\nFetching transactions for item ${item.id} (${item.institutionName || 'Unknown'})`);
-        console.log(`  Access token: ${item.accessToken.substring(0, 20)}...`);
+        // Decrypt access token before using
+        const decryptedAccessToken = decrypt(item.accessToken);
+        console.log(`  Access token: ${decryptedAccessToken.substring(0, 20)}...`);
         console.log(`  Date range: ${startDate} to ${endDate}`);
         
         const transactions = await syncTransactionsForItem(
-          item.accessToken,
+          decryptedAccessToken,
           req.userId,
           item.id,
           startDate,

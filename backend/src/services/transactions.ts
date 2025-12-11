@@ -231,6 +231,11 @@ export async function getTransactionsForUser(
         ? transaction.date.toISOString().split('T')[0]
         : String(transaction.date);
 
+      // Use customName if it exists and is not empty, otherwise use original name
+      const displayName = account?.customName && account.customName.trim() !== '' 
+        ? account.customName 
+        : (account?.name || null);
+
       return {
         ...transaction,
         date: dateStr,
@@ -240,7 +245,7 @@ export async function getTransactionsForUser(
         updatedAt: transaction.updatedAt instanceof Date
           ? transaction.updatedAt.toISOString()
           : String(transaction.updatedAt),
-        accountName: account?.customName || account?.name || null,
+        accountName: displayName,
         accountMask: account?.mask || null,
         categories: categoriesWithNames,
       };

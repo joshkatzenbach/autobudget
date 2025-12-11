@@ -1,0 +1,31 @@
+.analytics-container {
+  padding: 20px;
+
+  h2 {
+    margin: 0 0 30px 0;
+    color: #333;
+    font-size: 24px;
+  }
+
+  .chart-section {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    margin-bottom: 30px;
+
+    h3 {
+      margin: 0 0 20px 0;
+      color: #666;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .chart-wrapper {
+      position: relative;
+      height: 400px;
+      width: 100%;
+    }
+  }
+}
+

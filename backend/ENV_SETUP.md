@@ -11,13 +11,25 @@ NODE_ENV=development
 SESSION_SECRET=your-secret-key-change-this-in-production
 FRONTEND_URL=http://localhost:4200
 
+# Encryption Key (for encrypting Plaid access tokens)
+# Generate a secure 32-byte hex key using: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+ENCRYPTION_KEY=your-64-character-hex-encoded-encryption-key-here
+
 # Plaid Configuration
 PLAID_CLIENT_ID=your-plaid-client-id
 PLAID_SECRET=your-plaid-secret
 PLAID_ENV=sandbox
+PLAID_WEBHOOK_VERIFICATION_KEY=your-plaid-webhook-verification-key
 ```
 
-**Important:** Replace `user`, `password`, and `autobudget` with your actual PostgreSQL credentials and database name.
+**Important:** 
+- Replace `user`, `password`, and `autobudget` with your actual PostgreSQL credentials and database name.
+- Generate a secure encryption key for `ENCRYPTION_KEY`. You can generate one using:
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  ```
+  This will output a 64-character hex string that you should use as your `ENCRYPTION_KEY`. **Keep this key secure and never commit it to version control.**
+- **Plaid Webhook Verification Key**: Get this from your Plaid Dashboard under Webhooks settings. This key is used to verify that webhook requests are actually from Plaid. **Required in production.**
 
 ## 2. Install dependencies
 

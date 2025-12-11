@@ -1,21 +1,48 @@
 <div class="budgets-container">
   <header class="header">
-    <h1>{{ budget()?.name || 'My Budget' }}</h1>
-    <div class="header-actions">
-      <app-plaid-link></app-plaid-link>
-      <button class="btn-primary" (click)="syncTransactions()" [disabled]="syncLoading()">
-        {{ syncLoading() ? 'Syncing...' : 'Sync Transactions' }}
+    <div class="header-top">
+      <h1>{{ budget()?.name || 'My Budget' }}</h1>
+      <div class="header-actions">
+        <app-plaid-link></app-plaid-link>
+        <button class="btn-primary" (click)="syncTransactions()" [disabled]="syncLoading()">
+          {{ syncLoading() ? 'Syncing...' : 'Sync Transactions' }}
+        </button>
+        <button class="btn-primary" routerLink="/budgets/edit">
+          {{ budget() ? 'Edit Budget' : 'Create Budget' }}
+        </button>
+        <button class="btn-secondary" (click)="logout()">Logout</button>
+      </div>
+    </div>
+    
+    <!-- Tab Navigation -->
+    <div class="tabs">
+      <button 
+        class="tab-button" 
+        [class.active]="activeTab() === 'summary'"
+        (click)="activeTab.set('summary')">
+        Summary
       </button>
-      <button class="btn-primary" routerLink="/budgets/edit">
-        {{ budget() ? 'Edit Budget' : 'Create Budget' }}
+      <button 
+        class="tab-button" 
+        [class.active]="activeTab() === 'transactions'"
+        (click)="activeTab.set('transactions')">
+        Transactions
       </button>
-      <button class="btn-secondary" (click)="logout()">Logout</button>
+      <button 
+        class="tab-button" 
+        [class.active]="activeTab() === 'analytics'"
+        (click)="activeTab.set('analytics')">
+        Analytics
+      </button>
     </div>
   </header>
 
-  <!-- Balance Snapshot -->
-  @if (balanceSnapshot()) {
-    <div class="balance-snapshot">
+  <!-- Tab Content -->
+  @if (activeTab() === 'summary') {
+    <div class="tab-content summary-tab">
+      <!-- Balance Snapshot -->
+      @if (balanceSnapshot()) {
+        <div class="balance-snapshot">
       <div class="balance-header">
         <h2>Current Balance</h2>
         <button class="btn-refresh" (click)="loadBalanceSnapshot()" [disabled]="balanceLoading()">
@@ -131,150 +158,159 @@
               </div>
             </div>
           }
+          </div>
+        }
+      </div>
+      } @else if (balanceLoading()) {
+        <div class="balance-snapshot">
+          <p>Loading balance snapshot...</p>
+        </div>
+      }
+
+      <!-- Budget Summary -->
+      @if (loading()) {
+        <div class="loading">Loading budget...</div>
+      } @else if (error()) {
+        <div class="error">{{ error() }}</div>
+      } @else if (!budget()) {
+        <div class="empty-state">
+          <p>No budget yet. Create your first budget to get started!</p>
+          <button class="btn-primary" routerLink="/budgets/edit">Create Budget</button>
+        </div>
+      } @else {
+        <div class="budget-summary">
+          <div class="budget-details">
+            <div class="detail">
+              <span class="label">Period:</span>
+              <span>{{ formatDate(budget()!.startDate) }} - {{ formatDate(budget()!.endDate) }}</span>
+            </div>
+            <div class="detail">
+              <span class="label">Income:</span>
+              <span class="amount">{{ formatCurrency(budget()!.income) }}</span>
+            </div>
+          </div>
         </div>
       }
     </div>
-  } @else if (balanceLoading()) {
-    <div class="balance-snapshot">
-      <p>Loading balance snapshot...</p>
-    </div>
   }
 
-  <!-- Budget Summary -->
-  @if (loading()) {
-    <div class="loading">Loading budget...</div>
-  } @else if (error()) {
-    <div class="error">{{ error() }}</div>
-  } @else if (!budget()) {
-    <div class="empty-state">
-      <p>No budget yet. Create your first budget to get started!</p>
-      <button class="btn-primary" routerLink="/budgets/edit">Create Budget</button>
-    </div>
-  } @else {
-    <div class="budget-summary">
-      <div class="budget-details">
-        <div class="detail">
-          <span class="label">Period:</span>
-          <span>{{ formatDate(budget()!.startDate) }} - {{ formatDate(budget()!.endDate) }}</span>
-        </div>
-        <div class="detail">
-          <span class="label">Income:</span>
-          <span class="amount">{{ formatCurrency(budget()!.income) }}</span>
-        </div>
-      </div>
-    </div>
-  }
-
-  <!-- Recent Transactions -->
-  <div class="transactions-section">
-    <h2>Recent Transactions</h2>
-    @if (transactionsLoading() && transactions().length === 0) {
-      <div class="loading-message">Loading transactions...</div>
-    } @else if (transactionsError()) {
-      <div class="error-message">{{ transactionsError() }}</div>
-    } @else if (transactions().length === 0) {
-      <div class="no-transactions">
-        <p>No transactions found.</p>
-        <p>Click "Sync Transactions" to fetch transactions from your connected accounts.</p>
-      </div>
-    } @else {
-      <div class="transactions-table">
-        <table>
-          <thead>
-            <tr>
-              <th class="col-date">Date</th>
-              <th class="col-account">Account</th>
-              <th class="col-merchant">Merchant</th>
-              <th class="col-amount">Amount</th>
-              <th class="col-categories">Categories</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (transaction of transactions(); track transaction.id) {
-              <tr class="transaction-row" (click)="onTransactionRowClick(transaction)">
-                <td>{{ transaction.date }}</td>
-                <td>
-                  <span class="account-name">{{ transaction.accountName || 'Unknown Account' }}</span>
-                  @if (transaction.accountMask) {
-                    <span class="account-mask">****{{ transaction.accountMask }}</span>
-                  }
-                </td>
-                <td>{{ transaction.merchantName || transaction.name }}</td>
-                <td [class.negative]="parseAmount(transaction.amount) < 0">
-                  {{ formatCurrency(parseAmount(transaction.amount)) }}
-                </td>
-                <td class="categories-cell">
-                  <div class="category-rows">
-                    @for (cat of transaction.categories; track cat.id; let i = $index) {
-                      <div class="category-row">
-                        <!-- Empty space for alignment (no button needed) -->
-                        <span></span>
-                        
-                        <!-- Amount (read-only) -->
-                        <span class="amount-display">{{ formatCurrency(parseAmount(cat.amount)) }}</span>
-                        
-                        <!-- Category Dropdown -->
-                        <select 
-                          class="category-dropdown"
-                          [ngModel]="cat.categoryId"
-                          [style.background-color]="getCategoryColor(cat.categoryId)"
-                          [style.color]="getCategoryTextColor(cat.categoryId)"
-                          (ngModelChange)="quickChangeCategory(transaction.id, i, $event === null ? null : +$event, parseAmount(cat.amount))"
-                          (click)="$event.stopPropagation()">
-                          <option [ngValue]="null">Uncategorized</option>
-                          @for (category of categories(); track category.id) {
-                            <option [ngValue]="category.id">{{ category.name }}</option>
-                          }
-                        </select>
-                        
-                        <!-- Subcategory Dropdown -->
-                        @if (cat.categoryId && getSubcategoriesForCategory(cat.categoryId).length > 0) {
-                          <select 
-                            class="subcategory-dropdown"
-                            [ngModel]="cat.subcategoryId"
-                            (ngModelChange)="quickChangeSubcategory(transaction.id, i, $event === null ? null : +$event)"
-                            (click)="$event.stopPropagation()">
-                            <option [ngValue]="null">No subcategory</option>
-                            @for (subcat of getSubcategoriesForCategory(cat.categoryId); track subcat.id) {
-                              <option [ngValue]="subcat.id">{{ subcat.name }}</option>
+  @if (activeTab() === 'transactions') {
+    <div class="tab-content transactions-tab">
+      <!-- Recent Transactions -->
+      <div class="transactions-section">
+        <h2>Recent Transactions</h2>
+        @if (transactionsLoading() && transactions().length === 0) {
+          <div class="loading-message">Loading transactions...</div>
+        } @else if (transactionsError()) {
+          <div class="error-message">{{ transactionsError() }}</div>
+        } @else if (transactions().length === 0) {
+          <div class="no-transactions">
+            <p>No transactions found.</p>
+            <p>Click "Sync Transactions" to fetch transactions from your connected accounts.</p>
+          </div>
+        } @else {
+          <div class="transactions-table">
+            <table>
+              <thead>
+                <tr>
+                  <th class="col-date">Date</th>
+                  <th class="col-account">Account</th>
+                  <th class="col-merchant">Merchant</th>
+                  <th class="col-amount">Amount</th>
+                  <th class="col-categories">Categories</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (transaction of transactions(); track transaction.id) {
+                  <tr class="transaction-row" (click)="onTransactionRowClick(transaction)">
+                    <td>{{ formatDate(transaction.date) }}</td>
+                    <td>
+                      <span class="account-name">{{ transaction.accountName || 'Unknown Account' }}</span>
+                    </td>
+                    <td>{{ transaction.merchantName || transaction.name }}</td>
+                    <td [class.negative]="parseAmount(transaction.amount) < 0">
+                      {{ formatCurrency(parseAmount(transaction.amount)) }}
+                    </td>
+                    <td class="categories-cell">
+                      <div class="category-rows">
+                        @for (cat of transaction.categories; track cat.id; let i = $index) {
+                          <div class="category-row">
+                            <!-- Empty space for alignment (no button needed) -->
+                            <span></span>
+                            
+                            <!-- Amount (read-only) -->
+                            <span class="amount-display">{{ formatCurrency(parseAmount(cat.amount)) }}</span>
+                            
+                            <!-- Category Dropdown -->
+                            <select 
+                              class="category-dropdown"
+                              [ngModel]="cat.categoryId"
+                              [style.background-color]="getCategoryColor(cat.categoryId)"
+                              [style.color]="getCategoryTextColor(cat.categoryId)"
+                              (ngModelChange)="quickChangeCategory(transaction.id, i, $event === null ? null : +$event, parseAmount(cat.amount))"
+                              (click)="$event.stopPropagation()">
+                              <option [ngValue]="null">Uncategorized</option>
+                              @for (category of categories(); track category.id) {
+                                <option [ngValue]="category.id">{{ category.name }}</option>
+                              }
+                            </select>
+                            
+                            <!-- Subcategory Dropdown -->
+                            @if (cat.categoryId && getSubcategoriesForCategory(cat.categoryId).length > 0) {
+                              <select 
+                                class="subcategory-dropdown"
+                                [ngModel]="cat.subcategoryId"
+                                (ngModelChange)="quickChangeSubcategory(transaction.id, i, $event === null ? null : +$event)"
+                                (click)="$event.stopPropagation()">
+                                <option [ngValue]="null">No subcategory</option>
+                                @for (subcat of getSubcategoriesForCategory(cat.categoryId); track subcat.id) {
+                                  <option [ngValue]="subcat.id">{{ subcat.name }}</option>
+                                }
+                              </select>
+                            } @else {
+                              <span></span>
                             }
-                          </select>
-                        } @else {
-                          <span></span>
+                          </div>
+                        }
+                        @if (transaction.categories.length === 0) {
+                          <div class="category-row">
+                            <span></span>
+                            <span class="amount-display">{{ formatCurrency(parseAmount(transaction.amount)) }}</span>
+                            <select 
+                              class="category-dropdown"
+                              [ngModel]="null"
+                              (ngModelChange)="quickChangeCategory(transaction.id, 0, $event === null ? null : +$event, parseAmount(transaction.amount))"
+                              (click)="$event.stopPropagation()">
+                              <option [ngValue]="null">Uncategorized</option>
+                              @for (category of categories(); track category.id) {
+                                <option [ngValue]="category.id">{{ category.name }}</option>
+                              }
+                            </select>
+                            <span></span>
+                          </div>
                         }
                       </div>
-                    }
-                    @if (transaction.categories.length === 0) {
-                      <div class="category-row">
-                        <span></span>
-                        <span class="amount-display">{{ formatCurrency(parseAmount(transaction.amount)) }}</span>
-                        <select 
-                          class="category-dropdown"
-                          [ngModel]="null"
-                          (ngModelChange)="quickChangeCategory(transaction.id, 0, $event === null ? null : +$event, parseAmount(transaction.amount))"
-                          (click)="$event.stopPropagation()">
-                          <option [ngValue]="null">Uncategorized</option>
-                          @for (category of categories(); track category.id) {
-                            <option [ngValue]="category.id">{{ category.name }}</option>
-                          }
-                        </select>
-                        <span></span>
-                      </div>
-                    }
-                  </div>
-                </td>
-              </tr>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            @if (hasMoreTransactions()) {
+              <button class="btn-secondary load-more-btn" (click)="loadMoreTransactions()" [disabled]="transactionsLoading()">
+                {{ transactionsLoading() ? 'Loading...' : 'Load More' }}
+              </button>
             }
-          </tbody>
-        </table>
-        @if (hasMoreTransactions()) {
-          <button class="btn-secondary load-more-btn" (click)="loadMoreTransactions()" [disabled]="transactionsLoading()">
-            {{ transactionsLoading() ? 'Loading...' : 'Load More' }}
-          </button>
+          </div>
         }
       </div>
-    }
-  </div>
+    </div>
+  }
+
+  @if (activeTab() === 'analytics') {
+    <div class="tab-content analytics-tab">
+      <app-budget-analytics [budget]="budget()" [categories]="categories()"></app-budget-analytics>
+    </div>
+  }
 
   <!-- Transaction Edit Modal -->
   @if (selectedTransaction()) {

@@ -8,11 +8,12 @@ import { PlaidService } from '../../services/plaid.service';
 import { TransactionService } from '../../services/transaction.service';
 import { Budget, TransactionWithCategories, BudgetCategory } from '../../models/budget.model';
 import { PlaidLinkComponent } from '../plaid-link/plaid-link.component';
+import { BudgetAnalytics } from './budget-analytics/budget-analytics';
 
 @Component({
   selector: 'app-budgets',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule, PlaidLinkComponent],
+  imports: [CommonModule, FormsModule, RouterModule, PlaidLinkComponent, BudgetAnalytics],
   templateUrl: './budgets.component.html',
   styleUrl: './budgets.component.scss'
 })
@@ -20,6 +21,9 @@ export class BudgetsComponent implements OnInit {
   budget = signal<Budget | null>(null);
   loading = signal(false);
   error = signal<string | null>(null);
+  
+  // Tab management
+  activeTab = signal<'summary' | 'transactions' | 'analytics'>('summary');
   
   transactions = signal<TransactionWithCategories[]>([]);
   transactionsLoading = signal(false);
@@ -99,6 +103,11 @@ export class BudgetsComponent implements OnInit {
 
     this.transactionService.getTransactions(limit, offset).subscribe({
       next: (transactions) => {
+        // Debug: Log first transaction to verify accountName is present
+        if (transactions.length > 0 && offset === 0) {
+          console.log('[loadTransactions] First transaction accountName:', transactions[0].accountName);
+        }
+        
         if (offset === 0) {
           this.transactions.set(transactions);
         } else {
@@ -141,7 +150,12 @@ export class BudgetsComponent implements OnInit {
   }
 
   formatDate(dateString: string): string {
-    return new Date(dateString).toLocaleDateString();
+    const date = new Date(dateString);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[date.getMonth()];
+    const day = date.getDate();
+    const year = date.getFullYear();
+    return `${month} ${day} ${year}`;
   }
 
   formatCurrency(amount: string | number): string {
@@ -224,6 +238,9 @@ export class BudgetsComponent implements OnInit {
     const category = transaction.categories[categoryIndex];
     if (!category) return;
 
+    // Store current transaction count to maintain pagination
+    const currentCount = this.transactions().length;
+
     // Update the category assignment with the new subcategoryId
     // For single category transactions, we can just reassign with subcategory
     // For split transactions, we need to update all splits
@@ -236,8 +253,9 @@ export class BudgetsComponent implements OnInit {
         subcategoryId
       ).subscribe({
         next: () => {
+          // Reload all currently visible transactions to maintain pagination state
           this.transactionsOffset.set(0);
-          this.loadTransactions(15, 0);
+          this.loadTransactions(currentCount, 0);
         },
         error: (err) => {
           alert(err.error?.error || 'Failed to update subcategory');
@@ -253,8 +271,9 @@ export class BudgetsComponent implements OnInit {
       
       this.transactionService.splitTransaction(transactionId, splits).subscribe({
         next: () => {
+          // Reload all currently visible transactions to maintain pagination state
           this.transactionsOffset.set(0);
-          this.loadTransactions(15, 0);
+          this.loadTransactions(currentCount, 0);
         },
         error: (err) => {
           alert(err.error?.error || 'Failed to update subcategory');
@@ -334,8 +353,10 @@ export class BudgetsComponent implements OnInit {
 
       this.transactionService.removeTransactionCategory(transactionId, category.categoryId).subscribe({
         next: () => {
+          // Reload all currently visible transactions to maintain pagination state
+          const currentCount = this.transactions().length;
           this.transactionsOffset.set(0);
-          this.loadTransactions(15, 0);
+          this.loadTransactions(currentCount, 0);
         },
         error: (err) => {
           alert(err.error?.error || 'Failed to remove category');
@@ -349,8 +370,10 @@ export class BudgetsComponent implements OnInit {
       // Assign the category
       this.transactionService.assignTransactionCategory(transactionId, newCategoryId, amount).subscribe({
         next: () => {
+          // Reload all currently visible transactions to maintain pagination state
+          const currentCount = this.transactions().length;
           this.transactionsOffset.set(0);
-          this.loadTransactions(15, 0);
+          this.loadTransactions(currentCount, 0);
         },
         error: (err) => {
           alert(err.error?.error || 'Failed to update category');
@@ -381,10 +404,14 @@ export class BudgetsComponent implements OnInit {
       const category = transaction.categories[categoryIndex];
       if (!category) return;
 
+      // Store current transaction count to maintain pagination
+      const currentCount = this.transactions().length;
+
       this.transactionService.assignTransactionCategory(transactionId, newCategoryId, amount, category.subcategoryId || null).subscribe({
         next: () => {
+          // Reload all currently visible transactions to maintain pagination state
           this.transactionsOffset.set(0);
-          this.loadTransactions(15, 0);
+          this.loadTransactions(currentCount, 0);
         },
         error: (err) => {
           alert(err.error?.error || 'Failed to update category');
@@ -602,12 +629,15 @@ export class BudgetsComponent implements OnInit {
       amount: split.useRemaining ? this.calculateRemainingAmountInModal(i) : parseFloat(split.amount || '0')
     }));
 
+    // Store current transaction count to maintain pagination
+    const currentCount = this.transactions().length;
+
     this.transactionService.splitTransaction(transaction.id, splits).subscribe({
       next: () => {
         this.closeModal();
-        // Reload transactions
+        // Reload all currently visible transactions to maintain pagination state
         this.transactionsOffset.set(0);
-        this.loadTransactions(15, 0);
+        this.loadTransactions(currentCount, 0);
       },
       error: (err) => {
         alert(err.error?.error || 'Failed to save split');
@@ -634,6 +664,9 @@ export class BudgetsComponent implements OnInit {
       }
     }
 
+    // Store current transaction count to maintain pagination
+    const currentCount = this.transactions().length;
+
     this.transactionService.assignTransactionCategory(
       transaction.id,
       split.categoryId,
@@ -642,9 +675,9 @@ export class BudgetsComponent implements OnInit {
     ).subscribe({
       next: () => {
         this.closeModal();
-        // Reload transactions
+        // Reload all currently visible transactions to maintain pagination state
         this.transactionsOffset.set(0);
-        this.loadTransactions(15, 0);
+        this.loadTransactions(currentCount, 0);
       },
       error: (err) => {
         alert(err.error?.error || 'Failed to save category');
@@ -743,6 +776,11 @@ export class BudgetsComponent implements OnInit {
           accounts: updatedAccounts
         });
         this.cancelEditingAccountName();
+        
+        // Reload transactions to show updated account names
+        const currentCount = this.transactions().length;
+        this.transactionsOffset.set(0);
+        this.loadTransactions(currentCount, 0);
       },
       error: (err) => {
         alert(err.error?.error || 'Failed to update account name');
