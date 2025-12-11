@@ -1,0 +1,18 @@
+# Cursor Rules for AutoBudget
+
+## Database Access
+- You have permission to access the database directly for testing purposes
+- You can add, modify, or delete data in the database as needed for development and testing
+- Database connection details:
+  - Host: localhost
+  - Port: 5432
+  - Database: autobudget
+  - Username: joshkatzenbach
+  - No password required (peer authentication)
+
+## RxJS Usage
+- RxJS is okay to use, but keep it simple
+- Avoid using very complicated RxJS operators
+- When it's simpler, convert observables to promises using `.toPromise()` or `.firstValueFrom()` / `lastValueFrom()`
+- Prefer straightforward patterns over complex reactive chains
+

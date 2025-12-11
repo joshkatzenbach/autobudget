@@ -1,0 +1,36 @@
+{
+  "name": "autobudget-backend",
+  "version": "1.0.0",
+  "description": "Backend API for AutoBudget personal financial app",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:generate": "drizzle-kit generate:pg",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:studio": "drizzle-kit studio"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "drizzle-orm": "^0.29.0",
+    "express": "^4.18.2",
+    "openai": "^6.10.0",
+    "plaid": "^40.0.0",
+    "postgres": "^3.4.3"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "drizzle-kit": "^0.20.6",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

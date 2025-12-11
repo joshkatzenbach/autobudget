@@ -1,0 +1,15 @@
+{
+  "name": "autobudget",
+  "version": "1.0.0",
+  "description": "Personal financial app with Angular frontend and Express backend",
+  "private": true,
+  "scripts": {
+    "frontend": "cd ng-budget && npm start",
+    "backend": "cd backend && npm run dev",
+    "both": "concurrently \"npm run backend\" \"npm run frontend\" --names \"backend,frontend\" --prefix name"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
+

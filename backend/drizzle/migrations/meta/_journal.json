@@ -1,0 +1,104 @@
+{
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1764986615912,
+      "tag": "0000_useful_agent_zero",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1764987058179,
+      "tag": "0001_cooing_silver_surfer",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1764987403942,
+      "tag": "0002_soft_swarm",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1764988754801,
+      "tag": "0003_flat_blonde_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1765055116513,
+      "tag": "0004_category_types",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1765055712929,
+      "tag": "0005_add_category_color",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1765056685924,
+      "tag": "0006_remove_unused_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1765057248233,
+      "tag": "0007_add_subcategory_estimation",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1765058000000,
+      "tag": "0008_remove_repeat_pattern",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1765059000000,
+      "tag": "0009_add_plaid_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1765060000000,
+      "tag": "0010_add_transaction_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1765070000000,
+      "tag": "0011_single_budget_per_user",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1765080000000,
+      "tag": "0012_add_account_custom_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1765090000000,
+      "tag": "0013_add_transaction_subcategory",
+      "breakpoints": true
+    }
+  ]
+}
