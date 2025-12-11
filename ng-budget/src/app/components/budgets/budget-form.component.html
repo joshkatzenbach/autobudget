@@ -1,0 +1,466 @@
+<div class="budget-form-container">
+  <div class="budget-form-card">
+    <header class="form-header">
+      <h1>{{ isEditMode() ? 'Edit Budget' : 'Create New Budget' }}</h1>
+      <button class="btn-close" (click)="cancel()">×</button>
+    </header>
+
+    @if (error()) {
+      <div class="error-message">{{ error() }}</div>
+    }
+
+    <form (ngSubmit)="onSubmit()" #form="ngForm">
+      <div class="two-pane-layout">
+        <!-- Left Pane: User Input -->
+        <div class="left-pane">
+          <!-- Budget Basic Info -->
+          <section class="form-section">
+            <h2>Budget Information</h2>
+            
+            <div class="form-group">
+              <label for="name">Budget Name *</label>
+              <input
+                type="text"
+                id="name"
+                name="name"
+                [(ngModel)]="budgetForm.name"
+                required
+                placeholder="e.g., January 2024 Budget"
+                [disabled]="loading()"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="income">Income *</label>
+              <div class="income-input-group">
+                <input
+                  type="number"
+                  id="income"
+                  name="income"
+                  [ngModel]="budgetForm.income()"
+                  (ngModelChange)="budgetForm.income.set($event); initializeSurplusCategory()"
+                  required
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  [disabled]="loading()"
+                />
+                <select 
+                  [ngModel]="budgetForm.incomePeriod()"
+                  (ngModelChange)="budgetForm.incomePeriod.set($event); initializeSurplusCategory()"
+                  name="incomePeriod"
+                  [disabled]="loading()"
+                >
+                  <option value="monthly">Monthly</option>
+                  <option value="annual">Annual</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <!-- Tax Information -->
+          <section class="form-section">
+            <div class="tax-section-header">
+              <h2>Tax Information</h2>
+              <button type="button" class="btn-reset" (click)="resetTaxDefaults()" [disabled]="loading()">
+                Reset to Defaults
+              </button>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="filingStatus">Filing Status *</label>
+                <select
+                  id="filingStatus"
+                  name="filingStatus"
+                  [ngModel]="budgetForm.filingStatus()"
+                  (ngModelChange)="budgetForm.filingStatus.set($event)"
+                  required
+                  [disabled]="loading()"
+                >
+                  <option value="single">Single</option>
+                  <option value="married-jointly">Married Filing Jointly</option>
+                  <option value="married-separately">Married Filing Separately</option>
+                  <option value="head-of-household">Head of Household</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="deductions">Additional Deductions ($)</label>
+                <input
+                  type="number"
+                  id="deductions"
+                  name="deductions"
+                  [ngModel]="budgetForm.deductions()"
+                  (ngModelChange)="budgetForm.deductions.set($event)"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  [disabled]="loading()"
+                />
+                <small class="help-text">Beyond standard deduction ({{ formatCurrency(getStandardDeduction()) }})</small>
+              </div>
+            </div>
+          </section>
+
+          <!-- Spending Categories -->
+          <section class="form-section">
+            <div class="section-header">
+              <h2>Spending Categories</h2>
+            </div>
+
+            @if (categories().length === 0) {
+              <div class="empty-categories">
+                <p>No categories yet. Click "Add Category" to get started.</p>
+              </div>
+            } @else {
+              <div class="categories-list">
+                @for (category of categories(); track $index; let categoryIndex = $index) {
+                  <div class="category-item">
+                    <div class="category-summary" (click)="expandedCategoryIndex.set(expandedCategoryIndex() === categoryIndex ? null : categoryIndex)">
+                      <span class="category-name">{{ category.name || 'New Category' }}</span>
+                      <span class="category-amount">{{ formatCurrency(getCategoryAmount(category.allocatedAmount)) }}</span>
+                      @if (category.categoryType !== 'surplus') {
+                        <button type="button" class="btn-remove" (click)="removeCategory(categoryIndex); $event.stopPropagation()" [disabled]="loading()">Remove</button>
+                      }
+                    </div>
+
+                    @if (expandedCategoryIndex() === categoryIndex) {
+                      <div class="category-form-expanded">
+                        @if (category.categoryType === 'surplus') {
+                          <!-- Surplus category - only color is editable -->
+                          <div class="form-group">
+                            <label>Category Name</label>
+                            <input type="text" [value]="category.name" disabled />
+                            <small class="help-text">Surplus category is automatically calculated</small>
+                          </div>
+
+                          <div class="form-group">
+                            <label>Allocated Amount</label>
+                            <input type="text" [value]="formatCurrency(getCategoryAmount(category.allocatedAmount))" disabled />
+                            <small class="help-text">This is automatically set to your remaining budget</small>
+                          </div>
+
+                          <div class="form-group">
+                            <label>Color</label>
+                            <input 
+                              type="color" 
+                              [(ngModel)]="category.color" 
+                              name="catColor{{$index}}"
+                              [value]="category.color || '#28a745'"
+                              [disabled]="loading()"
+                              class="color-picker"
+                            />
+                          </div>
+                        } @else {
+                          <!-- Regular category - fully editable -->
+                          <div class="form-group">
+                            <label>Category Name *</label>
+                            <input type="text" [(ngModel)]="category.name" name="catName{{$index}}" required [disabled]="loading()" />
+                          </div>
+
+                          <div class="form-group">
+                            <label>Category Type *</label>
+                            <select [(ngModel)]="category.categoryType" name="catType{{$index}}" [disabled]="loading()">
+                              <option value="expected">Expected</option>
+                              <option value="savings">Savings</option>
+                              <option value="variable">Variable</option>
+                            </select>
+                          </div>
+
+                          <!-- Amount field - shown differently for Expected/Savings with/without subcategories -->
+                          @if ((category.categoryType === 'expected' || category.categoryType === 'savings') && category.useSubcategories) {
+                            <!-- Expected with subcategories: Amount is calculated from subcategories -->
+                            <div class="form-group">
+                              <label>Total Amount ($)</label>
+                              <input 
+                                type="text" 
+                                [value]="formatCurrency(getSubcategoryTotal(categoryIndex))" 
+                                disabled 
+                                readonly
+                              />
+                              <small class="help-text">Calculated from subcategories below (updates automatically)</small>
+                            </div>
+                          } @else {
+                            <!-- Regular amount input for all other cases -->
+                            <div class="form-group">
+                              <label>Amount ($) *</label>
+                              <div class="amount-input-group">
+                                <input type="number" [(ngModel)]="category.allocatedAmount" name="catAmount{{$index}}" step="0.01" min="0" required [disabled]="loading() || ((category.categoryType === 'expected' || category.categoryType === 'savings') && category.useSubcategories)" />
+                                <select [(ngModel)]="category.allocatedAmountPeriod" [name]="'catAmountPeriod' + $index" [disabled]="loading() || ((category.categoryType === 'expected' || category.categoryType === 'savings') && category.useSubcategories)">
+                                  <option value="monthly">Monthly</option>
+                                  <option value="annual">Annual</option>
+                                </select>
+                              </div>
+                              <small class="help-text">
+                                @if (category.categoryType === 'savings') {
+                                  Amount to allocate/save
+                                } @else {
+                                  Expected amount to spend
+                                }
+                              </small>
+                            </div>
+                          }
+
+                          <div class="form-group">
+                            <label>Color</label>
+                            <input 
+                              type="color" 
+                              [(ngModel)]="category.color" 
+                              name="catColor{{$index}}"
+                              [value]="category.color || getNextAvailableColor()"
+                              [disabled]="loading()"
+                              class="color-picker"
+                            />
+                          </div>
+
+                          <!-- Expected/Savings Category Fields -->
+                          @if (category.categoryType === 'expected' || category.categoryType === 'savings') {
+                            <div class="form-group checkbox-label">
+                              <input 
+                                type="checkbox" 
+                                [checked]="category.useSubcategories"
+                                (change)="toggleSubcategories(categoryIndex)"
+                                name="catUseSubcategories{{$index}}"
+                                [disabled]="loading()"
+                              />
+                              <label>Use subcategories (break down into multiple {{ category.categoryType === 'expected' ? 'bills' : 'savings buckets' }})</label>
+                            </div>
+
+                            @if (category.useSubcategories) {
+                              <div class="subcategories-section">
+                                <div class="subcategories-header">
+                                  <h4>Subcategories</h4>
+                                  <button type="button" class="btn-add-small" (click)="addSubcategory(categoryIndex)" [disabled]="loading()">+ Add</button>
+                                </div>
+                                <small class="help-text" style="display: block; margin-bottom: 10px;">
+                                  Add subcategories to break down this category (e.g., "Utilities" with "Water" and "Power" subcategories). The total amount is calculated automatically.
+                                </small>
+                                @for (subcat of category.subcategories; track subcatIndex; let subcatIndex = $index) {
+                                  <div class="subcategory-item">
+                                    <div class="subcategory-inputs">
+                                      <input 
+                                        type="text" 
+                                        [(ngModel)]="subcat.name" 
+                                        [name]="'subcatName' + categoryIndex + '_' + subcatIndex"
+                                        placeholder="Name (e.g., Water, Power)" 
+                                        (ngModelChange)="updateAllocatedFromSubcategories(categoryIndex)"
+                                        [disabled]="loading()" 
+                                      />
+                                      <div class="subcategory-amount-group">
+                                        <input 
+                                          type="number" 
+                                          [(ngModel)]="subcat.expectedAmount" 
+                                          [name]="'subcatAmount' + categoryIndex + '_' + subcatIndex"
+                                          step="0.01" 
+                                          min="0" 
+                                          placeholder="{{ category.categoryType === 'savings' ? 'Allocated Amount' : 'Expected Amount' }}" 
+                                          (ngModelChange)="updateAllocatedFromSubcategories(categoryIndex)"
+                                          [disabled]="loading()" 
+                                        />
+                                        <select 
+                                          [(ngModel)]="subcat.expectedAmountPeriod" 
+                                          [name]="'subcatAmountPeriod' + categoryIndex + '_' + subcatIndex"
+                                          (ngModelChange)="updateAllocatedFromSubcategories(categoryIndex)"
+                                          [disabled]="loading()"
+                                        >
+                                          <option value="monthly">Monthly</option>
+                                          <option value="annual">Annual</option>
+                                        </select>
+                                      </div>
+                                    </div>
+                                    <div class="subcategory-estimation">
+                                      <div class="form-group checkbox-label" style="margin-bottom: 8px;">
+                                        <input 
+                                          type="checkbox" 
+                                          [(ngModel)]="subcat.useEstimation"
+                                          name="subcatUseEst{{$index}}_{{subcatIndex}}"
+                                          [disabled]="loading()"
+                                        />
+                                        <label>Use estimation</label>
+                                      </div>
+                                      @if (subcat.useEstimation) {
+                                        <div class="form-group" style="margin-bottom: 0;">
+                                          <label>Estimation Months</label>
+                                          <input 
+                                            type="number" 
+                                            [(ngModel)]="subcat.estimationMonths" 
+                                            name="subcatEstMonths{{$index}}_{{subcatIndex}}" 
+                                            min="1" 
+                                            [disabled]="loading()" 
+                                          />
+                                        </div>
+                                      }
+                                    </div>
+                                    <button type="button" class="btn-remove-small" (click)="removeSubcategory(categoryIndex, subcatIndex)" [disabled]="loading()">×</button>
+                                  </div>
+                                }
+                              </div>
+                            } @else {
+                              <!-- Estimation for single category (no subcategories) -->
+                              <div class="form-group checkbox-label">
+                                <input 
+                                  type="checkbox" 
+                                  [(ngModel)]="category.useEstimation"
+                                  name="catUseEstimation{{$index}}"
+                                  [disabled]="loading()"
+                                />
+                                <label>Use estimation</label>
+                              </div>
+                              @if (category.useEstimation) {
+                                <div class="form-group">
+                                  <label>Estimation Months</label>
+                                  <input type="number" [(ngModel)]="category.estimationMonths" name="catEstMonths{{$index}}" min="1" [disabled]="loading()" />
+                                  <small class="help-text">Number of months to use for historical estimation</small>
+                                </div>
+                              }
+                            }
+                          }
+
+                        <!-- Savings Category Fields -->
+                        @if (category.categoryType === 'savings') {
+                          <div class="form-group">
+                            <label>Accumulated Total ($)</label>
+                            <input type="number" [(ngModel)]="category.accumulatedTotal" name="catAccum{{$index}}" step="0.01" min="0" [disabled]="loading()" />
+                            <small class="help-text">Current total saved in this category (year-to-date)</small>
+                          </div>
+                        }
+
+                          <!-- Buffer Settings -->
+                          <div class="form-group checkbox-label">
+                            <input type="checkbox" [(ngModel)]="category.isBufferCategory" name="catBuffer{{$index}}" [disabled]="loading()" />
+                            <label>Can be reduced when other categories go over budget</label>
+                          </div>
+
+                          @if (category.isBufferCategory) {
+                            <div class="form-group">
+                              <label>Buffer Priority</label>
+                              <input type="number" [(ngModel)]="category.bufferPriority" name="catBufferPriority{{$index}}" min="0" [disabled]="loading()" />
+                              <small class="help-text">Lower number = reduced first (Surplus is always 0)</small>
+                            </div>
+                          }
+
+                          <div class="category-form-actions">
+                            <div class="save-category-wrapper">
+                              <button 
+                                type="button" 
+                                class="btn-primary" 
+                                (click)="$event.preventDefault(); $event.stopPropagation(); saveCategory(categoryIndex)" 
+                                [disabled]="loading()"
+                              >
+                                Save Category
+                              </button>
+                              @if (getCategoryError(categoryIndex)) {
+                                <div class="category-error-message">{{ getCategoryError(categoryIndex) }}</div>
+                              }
+                            </div>
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+
+            <button type="button" class="btn-add" (click)="expandCategoryForm()" [disabled]="loading()">
+              + Add Category
+            </button>
+          </section>
+
+          <!-- Form Actions -->
+          <div class="form-actions">
+            <button type="button" class="btn-secondary" (click)="cancel()" [disabled]="loading()">Cancel</button>
+            <button type="submit" class="btn-primary" [disabled]="loading() || !form.valid">
+              {{ loading() ? (isEditMode() ? 'Updating...' : 'Creating...') : (isEditMode() ? 'Update Budget' : 'Create Budget') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Right Pane: Summary -->
+        <div class="right-pane">
+          <!-- Tax Summary -->
+          <section class="summary-section">
+            <h3>Tax Summary</h3>
+            <div class="summary-table">
+              <div class="summary-header">
+                <span></span>
+                <span>Monthly</span>
+                <span>Annual</span>
+              </div>
+              <div class="summary-row">
+                <span>Federal Income Tax</span>
+                <span class="summary-amount">{{ formatCurrency(getFederalIncomeTaxAmount()) }}</span>
+                <span class="summary-amount">{{ formatCurrency(taxCalculation().federalIncomeTax.amount) }}</span>
+              </div>
+              <div class="summary-row">
+                <span>FICA Taxes</span>
+                <span class="summary-amount">{{ formatCurrency(getFicaTaxAmount()) }}</span>
+                <span class="summary-amount">{{ formatCurrency(taxCalculation().ficaTax.total.amount) }}</span>
+              </div>
+              <div class="summary-row">
+                <span>State Tax</span>
+                <span class="summary-amount">{{ formatCurrency(getStateTaxAmount()) }}</span>
+                <span class="summary-amount">{{ formatCurrency(taxCalculation().stateTax.amount) }}</span>
+              </div>
+              <div class="summary-row highlight">
+                <span><strong>Total Tax</strong></span>
+                <span class="summary-amount"><strong>{{ formatCurrency(getTaxAmount()) }}</strong></span>
+                <span class="summary-amount"><strong>{{ formatCurrency(getAnnualTaxAmount()) }}</strong></span>
+              </div>
+            </div>
+          </section>
+
+          <!-- Budget Summary -->
+          <section class="summary-section">
+            <h3>Budget Summary</h3>
+            <div class="summary-table">
+              <div class="summary-header">
+                <span></span>
+                <span>Monthly</span>
+                <span>Yearly</span>
+              </div>
+              
+              <!-- Total Income -->
+              <div class="summary-row">
+                <span>Total Income</span>
+                <span class="summary-amount">{{ formatCurrency(getIncomeAmount()) }}</span>
+                <span class="summary-amount">{{ formatCurrency(getAnnualIncome()) }}</span>
+              </div>
+
+              <!-- Spending Categories - each on its own line -->
+              @for (item of getAnnualSpendingSummary(); track item.name) {
+                <div class="summary-row spending-category">
+                  <span class="category-name">
+                    <span class="color-indicator" [style.background-color]="item.color"></span>
+                    {{ item.name }}
+                  </span>
+                  <span class="summary-amount">{{ formatCurrency(item.monthly) }}</span>
+                  <span class="summary-amount">{{ formatCurrency(item.annual) }}</span>
+                </div>
+              }
+
+              <!-- Total Spending -->
+              <div class="summary-row highlight">
+                <span><strong>Total Spending</strong></span>
+                <span class="summary-amount"><strong>{{ formatCurrency(getTotalSpending()) }}</strong></span>
+                <span class="summary-amount"><strong>{{ formatCurrency(getAnnualTotalSpending()) }}</strong></span>
+              </div>
+
+              <!-- Remaining Budget (Surplus) -->
+              <div class="summary-row highlight remaining-budget" [class.negative]="getRemainingBudget() < 0">
+                <span class="category-name">
+                  <span class="color-indicator" style="background-color: #28a745"></span>
+                  <strong>Surplus (Remaining Budget)</strong>
+                </span>
+                <span class="summary-amount"><strong>{{ formatCurrency(getRemainingBudget()) }}</strong></span>
+                <span class="summary-amount"><strong>{{ formatCurrency(getAnnualRemainingBudget()) }}</strong></span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+    </form>
+  </div>
+</div>
