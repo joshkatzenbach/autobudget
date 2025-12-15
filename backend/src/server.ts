@@ -6,6 +6,7 @@ import authRoutes from './routes/auth';
 import budgetRoutes from './routes/budgets';
 import plaidRoutes from './routes/plaid';
 import transactionRoutes from './routes/transactions';
+import slackRoutes from './routes/slack';
 
 dotenv.config();
 
@@ -31,20 +32,35 @@ app.use(cors({
   origin: FRONTEND_URL,
   credentials: true,
 }));
-// Add request size limits to prevent DoS attacks
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// IMPORTANT: Register Slack interactive webhook BEFORE global body parsers
+// This allows us to capture the raw body for signature verification
+app.use('/api/slack/interactive', 
+  express.urlencoded({ 
+    extended: false, 
+    verify: (req: any, res, buf) => {
+      console.log('[DEBUG] Capturing raw body via verify callback, length:', buf.length);
+      req.rawBody = buf;
+      console.log('[DEBUG] Raw body preview (first 200 chars):', buf.toString('utf8').substring(0, 200));
+    }
+  })
+);
+
+// Add request size limits to prevent DoS attacks
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/plaid', plaidRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/slack', slackRoutes);
 
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -10,7 +10,7 @@ import {
   generateMonthlySummary,
   getMonthlySummaries,
 } from '../services/transactions';
-import { transactionCategoryOverrides, budgets, plaidItems, plaidTransactions } from '../db/schema';
+import { transactionCategoryOverrides, budgets, plaidItems, plaidTransactions, plaidAccounts } from '../db/schema';
 import { db } from '../db';
 import { eq, and } from 'drizzle-orm';
 import { syncTransactionsForItem } from '../services/plaid';
@@ -32,8 +32,9 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
     const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
+    const reviewed = req.query.reviewed === 'true' ? true : req.query.reviewed === 'false' ? false : null;
 
-    const transactions = await getTransactionsForUser(req.userId, limit, offset);
+    const transactions = await getTransactionsForUser(req.userId, limit, offset, reviewed);
 
     res.json(transactions);
   } catch (error: any) {
@@ -264,19 +265,31 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
 
         for (const tx of transactions) {
           try {
-            // Log transaction structure for debugging
-            if (totalFetched === 0) {
-              console.log(`\n  Processing first transaction:`, {
-                account_id: tx.account_id,
-                transaction_id: tx.transaction_id,
-                amount: tx.amount,
-                merchant_name: tx.merchant_name,
-                name: tx.name,
-                date: tx.date,
-                personal_finance_category: tx.personal_finance_category,
-                pending: tx.pending,
-              });
-            }
+            // Get account type for this transaction
+            const [accountRecord] = await db
+              .select({ type: plaidAccounts.type, subtype: plaidAccounts.subtype })
+              .from(plaidAccounts)
+              .where(and(
+                eq(plaidAccounts.itemId, item.id),
+                eq(plaidAccounts.accountId, tx.account_id)
+              ))
+              .limit(1);
+
+            // Log EVERY transaction's raw Plaid amount for debugging
+            console.log(`[PLAID DEBUG] Transaction from Plaid:`, {
+              transaction_id: tx.transaction_id,
+              merchant_name: tx.merchant_name || 'N/A',
+              name: tx.name,
+              raw_amount_from_plaid: tx.amount,
+              amount_type: typeof tx.amount,
+              amount_is_negative: tx.amount < 0,
+              amount_is_positive: tx.amount > 0,
+              date: tx.date,
+              account_id: tx.account_id,
+              account_type: accountRecord?.type || 'UNKNOWN',
+              account_subtype: accountRecord?.subtype || 'UNKNOWN',
+              personal_finance_category: tx.personal_finance_category || null,
+            });
 
             // Store transaction (will skip if duplicate due to unique constraint)
             try {
@@ -299,12 +312,22 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                 plaidCategoryId = tx.category_id || null;
               }
 
+              // Log before storing
+              const amountToStore = tx.amount.toString();
+              console.log(`[PLAID SYNC DEBUG] Storing transaction:`, {
+                transaction_id: tx.transaction_id,
+                raw_plaid_amount: tx.amount,
+                amount_to_store: amountToStore,
+                merchant_name: tx.merchant_name || 'N/A',
+                name: tx.name,
+              });
+
               const storedTx = await storeTransaction(
                 req.userId,
                 item.id,
                 tx.account_id,
                 tx.transaction_id,
-                tx.amount.toString(),
+                amountToStore,
                 tx.merchant_name || null,
                 tx.name,
                 tx.date,
@@ -312,6 +335,15 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                 plaidCategoryId,
                 tx.pending || false
               );
+
+              // Log after storing to verify
+              console.log(`[PLAID SYNC DEBUG] Transaction stored in DB:`, {
+                db_id: storedTx.id,
+                transaction_id: storedTx.transactionId,
+                amount_in_db: storedTx.amount,
+                raw_plaid_amount: tx.amount,
+                match: storedTx.amount === amountToStore ? '✓ MATCH' : '✗ MISMATCH',
+              });
 
               totalFetched++;
               storedCount++;
@@ -329,7 +361,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                   plaidCategoryForLLM = tx.category;
                 }
 
-                const categoryId = await categorizeTransaction({
+                const categorizationResult = await categorizeTransaction({
                   amount: parseFloat(tx.amount.toString()),
                   merchantName: tx.merchant_name || null,
                   plaidCategory: plaidCategoryForLLM,
@@ -337,12 +369,13 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                   transactionName: tx.name || null,
                 });
 
-                if (categoryId) {
+                if (categorizationResult.categoryId) {
                   await assignTransactionCategory(
                     storedTx.id,
-                    categoryId,
+                    categorizationResult.categoryId,
                     tx.amount.toString(),
-                    false // LLM-assigned
+                    false, // LLM-assigned
+                    categorizationResult.subcategoryId
                   );
                   totalCategorized++;
                 }

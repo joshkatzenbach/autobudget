@@ -16,6 +16,7 @@ import {
 } from '../services/plaid';
 import { storeTransaction, assignTransactionCategory } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
+import { sendTransactionNotification } from '../services/slack-notifications';
 import { encrypt, decrypt } from '../utils/encryption';
 
 const router = express.Router();
@@ -65,6 +66,19 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
       // Store and categorize each transaction
       for (const tx of transactions) {
         try {
+          // Log EVERY transaction's raw Plaid amount for debugging
+          console.log(`[PLAID WEBHOOK DEBUG] Transaction from Plaid:`, {
+            transaction_id: tx.transaction_id,
+            merchant_name: tx.merchant_name || 'N/A',
+            name: tx.name,
+            raw_amount_from_plaid: tx.amount,
+            amount_type: typeof tx.amount,
+            amount_is_negative: tx.amount < 0,
+            amount_is_positive: tx.amount > 0,
+            date: tx.date,
+            account_id: tx.account_id,
+          });
+
           // Check if transaction already exists
           const [existing] = await db
             .select()
@@ -73,6 +87,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
             .limit(1);
 
           if (existing) {
+            console.log(`[PLAID WEBHOOK DEBUG] Transaction ${tx.transaction_id} already exists, skipping`);
             continue; // Skip if already stored
           }
 
@@ -94,13 +109,23 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
             plaidCategoryId = tx.category_id || null;
           }
 
+          // Log before storing
+          const amountToStore = tx.amount.toString();
+          console.log(`[PLAID WEBHOOK DEBUG] Storing transaction:`, {
+            transaction_id: tx.transaction_id,
+            raw_plaid_amount: tx.amount,
+            amount_to_store: amountToStore,
+            merchant_name: tx.merchant_name || 'N/A',
+            name: tx.name,
+          });
+
           // Store transaction
           const storedTx = await storeTransaction(
             plaidItem.userId,
             plaidItem.id,
             tx.account_id,
             tx.transaction_id,
-            tx.amount.toString(),
+            amountToStore,
             tx.merchant_name || null,
             tx.name,
             tx.date,
@@ -108,6 +133,15 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
             plaidCategoryId,
             tx.pending || false
           );
+
+          // Log after storing to verify
+          console.log(`[PLAID WEBHOOK DEBUG] Transaction stored in DB:`, {
+            db_id: storedTx.id,
+            transaction_id: storedTx.transactionId,
+            amount_in_db: storedTx.amount,
+            raw_plaid_amount: tx.amount,
+            match: storedTx.amount === amountToStore ? '✓ MATCH' : '✗ MISMATCH',
+          });
 
           // Categorize transaction (get first active budget for user)
           const [userBudget] = await db
@@ -132,7 +166,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                 plaidCategoryForLLM = tx.category;
               }
 
-              const categoryId = await categorizeTransaction({
+              const categorizationResult = await categorizeTransaction({
                 amount: parseFloat(tx.amount.toString()),
                 merchantName: tx.merchant_name || null,
                 plaidCategory: plaidCategoryForLLM,
@@ -140,13 +174,27 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                 transactionName: tx.name || null,
               });
 
-              if (categoryId) {
+              if (categorizationResult.categoryId) {
                 await assignTransactionCategory(
                   storedTx.id,
-                  categoryId,
+                  categorizationResult.categoryId,
                   tx.amount.toString(),
-                  false // LLM-assigned
+                  false, // LLM-assigned
+                  categorizationResult.subcategoryId
                 );
+
+                // Send Slack notification
+                try {
+                  await sendTransactionNotification(
+                    plaidItem.userId,
+                    storedTx.id,
+                    categorizationResult.categoryId,
+                    categorizationResult.subcategoryId
+                  );
+                } catch (slackError: any) {
+                  console.error(`Error sending Slack notification for transaction ${storedTx.id}:`, slackError);
+                  // Don't fail the webhook if Slack fails
+                }
               }
             } catch (error: any) {
               console.error(`Error categorizing transaction ${tx.transaction_id}:`, error);
@@ -479,6 +527,154 @@ router.get('/balance-snapshot', async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     console.error('Error getting balance snapshot:', error);
     res.status(500).json({ error: 'Failed to get balance snapshot' });
+  }
+});
+
+// Test endpoint to simulate a Plaid webhook transaction
+router.post('/test/generate-transaction', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    // Get user's first Plaid item and account
+    const [plaidItem] = await db
+      .select()
+      .from(plaidItems)
+      .where(eq(plaidItems.userId, req.userId))
+      .limit(1);
+
+    if (!plaidItem) {
+      return res.status(400).json({ error: 'No Plaid account connected. Please connect an account first.' });
+    }
+
+    const [account] = await db
+      .select()
+      .from(plaidAccounts)
+      .where(eq(plaidAccounts.itemId, plaidItem.id))
+      .limit(1);
+
+    if (!account) {
+      return res.status(400).json({ error: 'No account found for connected Plaid item.' });
+    }
+
+    // Generate a test transaction
+    const testMerchants = [
+      'Walmart',
+      'Target',
+      'Amazon',
+      'Starbucks',
+      'Shell',
+      'CVS Pharmacy',
+      'Whole Foods',
+      'Home Depot',
+      'Best Buy',
+      'McDonald\'s'
+    ];
+    const testMerchant = testMerchants[Math.floor(Math.random() * testMerchants.length)];
+    // Generate positive amount for OUTGOING transactions (money going out) - matches Plaid's convention
+    // See PLAID_AMOUNT_CONVENTION.md for full documentation
+    // Plaid convention: positive = outgoing (debits), negative = incoming (credits)
+    // Amount between $10-$210, stored as positive string (e.g., "123.45")
+    // This represents an expense/purchase, so it should be positive (outgoing)
+    const testAmount = (Math.random() * 200 + 10).toFixed(2);
+    const testTransactionId = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Create test Plaid category
+    const plaidCategory = JSON.stringify({
+      primary: 'GENERAL_MERCHANDISE',
+      detailed: 'GENERAL_MERCHANDISE_SUPERSTORES'
+    });
+    const plaidCategoryId = 'GENERAL_MERCHANDISE_SUPERSTORES';
+
+    // Store transaction
+    const storedTx = await storeTransaction(
+      req.userId,
+      plaidItem.id,
+      account.accountId,
+      testTransactionId,
+      testAmount,
+      testMerchant,
+      `${testMerchant} Purchase`,
+      today,
+      plaidCategory,
+      plaidCategoryId,
+      false
+    );
+
+    // Get user's budget
+    const [userBudget] = await db
+      .select()
+      .from(budgets)
+      .where(and(
+        eq(budgets.userId, req.userId),
+        eq(budgets.isActive, true)
+      ))
+      .limit(1);
+
+    if (!userBudget) {
+      return res.status(400).json({ error: 'No active budget found. Please create a budget first.' });
+    }
+
+    // Categorize transaction
+    let categoryId: number | null = null;
+    let subcategoryId: number | null = null;
+
+    try {
+      const categorizationResult = await categorizeTransaction({
+        amount: parseFloat(testAmount),
+        merchantName: testMerchant,
+        plaidCategory: ['GENERAL_MERCHANDISE', 'GENERAL_MERCHANDISE_SUPERSTORES'],
+        userId: req.userId,
+        transactionName: `${testMerchant} Purchase`,
+      });
+
+      if (categorizationResult.categoryId) {
+        categoryId = categorizationResult.categoryId;
+        subcategoryId = categorizationResult.subcategoryId;
+
+        await assignTransactionCategory(
+          storedTx.id,
+          categorizationResult.categoryId,
+          testAmount,
+          false, // LLM-assigned
+          categorizationResult.subcategoryId
+        );
+
+        // Send Slack notification
+        try {
+          await sendTransactionNotification(
+            req.userId,
+            storedTx.id,
+            categorizationResult.categoryId,
+            categorizationResult.subcategoryId
+          );
+        } catch (slackError: any) {
+          console.error(`Error sending Slack notification for test transaction ${storedTx.id}:`, slackError);
+          // Don't fail the request if Slack fails
+        }
+      }
+    } catch (catError: any) {
+      console.error(`Error categorizing test transaction:`, catError);
+      // Continue - transaction stored but uncategorized
+    }
+
+    res.json({
+      success: true,
+      transaction: {
+        id: storedTx.id,
+        transactionId: testTransactionId,
+        merchant: testMerchant,
+        amount: testAmount,
+        date: today,
+        categoryId,
+        subcategoryId
+      }
+    });
+  } catch (error: any) {
+    console.error('Error generating test transaction:', error);
+    res.status(500).json({ error: 'Failed to generate test transaction', details: error.message });
   }
 });
 

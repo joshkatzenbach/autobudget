@@ -13,10 +13,11 @@ import {
 export class TransactionService {
   constructor(private api: ApiService) {}
 
-  getTransactions(limit?: number, offset?: number): Observable<TransactionWithCategories[]> {
+  getTransactions(limit?: number, offset?: number, reviewed?: boolean | null): Observable<TransactionWithCategories[]> {
     const params: any = {};
     if (limit !== undefined) params.limit = limit;
     if (offset !== undefined) params.offset = offset;
+    if (reviewed !== null && reviewed !== undefined) params.reviewed = reviewed.toString();
     const queryString = new URLSearchParams(params).toString();
     return this.api.get<TransactionWithCategories[]>(`/transactions${queryString ? '?' + queryString : ''}`);
   }

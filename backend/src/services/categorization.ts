@@ -29,6 +29,11 @@ export interface CategorizeTransactionParams {
   transactionName?: string | null; // Transaction name for transfer detection
 }
 
+export interface CategorizeTransactionResult {
+  categoryId: number | null;
+  subcategoryId: number | null;
+}
+
 /**
  * Detects if a transaction is a transfer or credit card payment that should be excluded
  */
@@ -76,7 +81,7 @@ function detectTransferTransaction(
   return false;
 }
 
-export async function categorizeTransaction(params: CategorizeTransactionParams): Promise<number | null> {
+export async function categorizeTransaction(params: CategorizeTransactionParams): Promise<CategorizeTransactionResult> {
   const { amount, merchantName, plaidCategory, userId, budgetId: providedBudgetId, transactionName } = params;
 
   // Get user's budget ID if not provided
@@ -84,7 +89,7 @@ export async function categorizeTransaction(params: CategorizeTransactionParams)
   if (!budgetId) {
     const budget = await getUserBudget(userId);
     if (!budget) {
-      return null; // No budget exists
+      return { categoryId: null, subcategoryId: null }; // No budget exists
     }
     budgetId = budget.id;
   }
@@ -92,20 +97,20 @@ export async function categorizeTransaction(params: CategorizeTransactionParams)
   // Get available budget categories
   const allCategories = await getBudgetCategories(userId);
   if (!allCategories || allCategories.length === 0) {
-    return null;
+    return { categoryId: null, subcategoryId: null };
   }
 
   // Filter out Surplus category - it should not be used for regular spending transactions
   const categories = allCategories.filter(cat => cat.categoryType !== 'surplus');
   if (categories.length === 0) {
-    return null; // No valid categories available
+    return { categoryId: null, subcategoryId: null }; // No valid categories available
   }
 
   // Check if this is a transfer transaction - if so, return Excluded category
   if (detectTransferTransaction(merchantName, plaidCategory, transactionName)) {
     const excludedCategory = categories.find(cat => cat.categoryType === 'excluded');
     if (excludedCategory) {
-      return excludedCategory.id;
+      return { categoryId: excludedCategory.id, subcategoryId: null };
     }
   }
 
@@ -115,16 +120,31 @@ export async function categorizeTransaction(params: CategorizeTransactionParams)
   // Get user's category overrides (we'll add this later, for now empty array)
   const userOverrides: any[] = []; // TODO: Get from transactionCategoryOverrides
 
-  // Format merchant history for prompt
+  // Format merchant history for prompt (including subcategories)
   const historyText = merchantHistory.length > 0
     ? merchantHistory.map((tx, idx) => {
-        const categoryNames = tx.categories.map(c => c.categoryName).join(', ');
-        return `  - Transaction ${idx + 1}: $${tx.amount} on ${tx.date} → Category: "${categoryNames}"`;
+        const categoryInfo = tx.categories.map(c => {
+          if (c.subcategoryName) {
+            return `${c.categoryName} > ${c.subcategoryName}`;
+          }
+          return c.categoryName;
+        }).join(', ');
+        return `  - Transaction ${idx + 1}: $${tx.amount} on ${tx.date} → Category: "${categoryInfo}"`;
       }).join('\n')
     : '  (No history available)';
 
-  // Format categories for prompt (excluding Surplus)
-  const categoriesText = categories.map(cat => `  - ID: ${cat.id}, Name: "${cat.name}"${cat.categoryType === 'excluded' ? ' (for transfers/payments)' : ''}`).join('\n');
+  // Format categories for prompt (excluding Surplus), including subcategories
+  const categoriesText = categories.map(cat => {
+    let categoryLine = `  - ID: ${cat.id}, Name: "${cat.name}"${cat.categoryType === 'excluded' ? ' (for transfers/payments)' : ''}`;
+    
+    // Add subcategories if they exist
+    if (cat.subcategories && cat.subcategories.length > 0) {
+      const subcategoriesList = cat.subcategories.map(sub => `    - Subcategory ID: ${sub.id}, Name: "${sub.name}"`).join('\n');
+      categoryLine += `\n    Subcategories:\n${subcategoriesList}`;
+    }
+    
+    return categoryLine;
+  }).join('\n');
 
   // Format overrides for prompt
   const overridesText = userOverrides.length > 0
@@ -147,10 +167,18 @@ IMPORTANT RULES:
 1. If this transaction is a transfer between accounts, credit card payment, or similar internal money movement, use the "Excluded" category (it will be in the list above with categoryType 'excluded').
 2. DO NOT use "Surplus" category unless this is truly surplus income (like a bonus or unexpected income). Surplus is for leftover money after all expenses, not for regular spending transactions.
 3. Choose the most appropriate spending category based on the merchant, amount, and Plaid category.
+4. If the selected category has subcategories, you MUST also select the most appropriate subcategory. If the category has no subcategories, return null for subcategoryId.
 
-Based on the historical pattern and available categories, return ONLY the most appropriate budget category ID for this transaction as a number.
-If no category matches well, return null.
-Return ONLY the number (e.g., 5) or null, nothing else.`;
+Based on the historical pattern and available categories, return a JSON object with:
+- categoryId: the budget category ID (number or null)
+- subcategoryId: the subcategory ID if the category has subcategories, otherwise null
+
+Example responses:
+- Category with subcategories: {"categoryId": 5, "subcategoryId": 12}
+- Category without subcategories: {"categoryId": 5, "subcategoryId": null}
+- No match: {"categoryId": null, "subcategoryId": null}
+
+Return ONLY the JSON object, nothing else.`;
 
   try {
     const client = getOpenAIClient();
@@ -159,7 +187,7 @@ Return ONLY the number (e.g., 5) or null, nothing else.`;
       messages: [
         {
           role: 'system',
-          content: 'You are a financial transaction categorizer. Return only the category ID number or null.',
+          content: 'You are a financial transaction categorizer. Return only a JSON object with categoryId and subcategoryId.',
         },
         {
           role: 'user',
@@ -167,25 +195,54 @@ Return ONLY the number (e.g., 5) or null, nothing else.`;
         },
       ],
       temperature: 0.3,
-      max_tokens: 10,
+      max_tokens: 50,
+      response_format: { type: 'json_object' },
     });
 
     const response = completion.choices[0]?.message?.content?.trim();
-    if (!response || response.toLowerCase() === 'null') {
-      return null;
+    if (!response) {
+      return { categoryId: null, subcategoryId: null };
     }
 
-    const categoryId = parseInt(response, 10);
-    if (isNaN(categoryId)) {
-      return null;
-    }
+    try {
+      const result = JSON.parse(response);
+      const categoryId = result.categoryId !== null && result.categoryId !== undefined 
+        ? parseInt(String(result.categoryId), 10) 
+        : null;
+      const subcategoryId = result.subcategoryId !== null && result.subcategoryId !== undefined
+        ? parseInt(String(result.subcategoryId), 10)
+        : null;
 
-    // Verify category exists in budget
-    const categoryExists = categories.some(cat => cat.id === categoryId);
-    return categoryExists ? categoryId : null;
+      // Verify category exists in budget
+      if (categoryId !== null) {
+        const category = categories.find(cat => cat.id === categoryId);
+        if (!category) {
+          return { categoryId: null, subcategoryId: null };
+        }
+
+        // Verify subcategory exists and belongs to the category
+        if (subcategoryId !== null) {
+          const subcategory = category.subcategories?.find(sub => sub.id === subcategoryId);
+          if (!subcategory) {
+            // If category has subcategories but the selected one doesn't exist, return null for subcategory
+            // The category will still be assigned, but without a subcategory
+            return { categoryId, subcategoryId: null };
+          }
+        } else if (category.subcategories && category.subcategories.length > 0) {
+          // Category has subcategories but LLM didn't select one - return null for both
+          // This will require manual selection
+          return { categoryId: null, subcategoryId: null };
+        }
+      }
+
+      return { categoryId, subcategoryId };
+    } catch (parseError) {
+      console.error('Error parsing LLM response:', parseError);
+      return { categoryId: null, subcategoryId: null };
+    }
   } catch (error) {
     console.error('Error categorizing transaction with OpenAI:', error);
-    return null;
+    return { categoryId: null, subcategoryId: null };
   }
 }
 

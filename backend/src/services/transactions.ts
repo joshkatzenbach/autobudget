@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { plaidTransactions, transactionCategories, transactionCategoryOverrides, monthlyCategorySummaries, budgetCategories, budgets, plaidAccounts } from '../db/schema';
+import { plaidTransactions, transactionCategories, transactionCategoryOverrides, monthlyCategorySummaries, budgetCategories, budgets, plaidAccounts, budgetCategorySubcategories } from '../db/schema';
 import { eq, and, desc, gte, lte, sql, inArray, isNull } from 'drizzle-orm';
 
 export interface TransactionWithCategories {
@@ -15,6 +15,7 @@ export interface TransactionWithCategories {
   plaidCategory: string | null;
   plaidCategoryId: string | null;
   isPending: boolean;
+  isReviewed: boolean;
   createdAt: Date;
   updatedAt: Date;
   accountName?: string | null;
@@ -97,6 +98,14 @@ export async function assignTransactionCategory(
     })
     .returning();
 
+  // Mark transaction as reviewed if manually assigned
+  if (isManual) {
+    await db
+      .update(plaidTransactions)
+      .set({ isReviewed: true, updatedAt: new Date() })
+      .where(eq(plaidTransactions.id, transactionId));
+  }
+
   return categoryAssignment;
 }
 
@@ -119,8 +128,11 @@ export async function updateTransactionCategories(
   const totalAmount = parseFloat(transaction[0].amount);
   const splitTotal = splits.reduce((sum, split) => sum + parseFloat(split.amount), 0);
 
-  if (Math.abs(totalAmount - splitTotal) > 0.01) {
-    throw new Error(`Split amounts (${splitTotal}) must equal transaction total (${totalAmount})`);
+  // Compare absolute values: Plaid convention is positive = outgoing, negative = incoming
+  // Split amounts are stored as positive (the portion assigned to each category)
+  // So we compare the absolute value of the transaction amount with the sum of split amounts
+  if (Math.abs(Math.abs(totalAmount) - splitTotal) > 0.01) {
+    throw new Error(`Split amounts (${splitTotal}) must equal transaction total (${Math.abs(totalAmount)})`);
   }
 
   // Delete existing categories
@@ -141,6 +153,14 @@ export async function updateTransactionCategories(
     );
   }
 
+  // Mark transaction as reviewed if manually assigned
+  if (isManual) {
+    await db
+      .update(plaidTransactions)
+      .set({ isReviewed: true, updatedAt: new Date() })
+      .where(eq(plaidTransactions.id, transactionId));
+  }
+
   return splits;
 }
 
@@ -157,13 +177,28 @@ async function getUserBudgetId(userId: number): Promise<number | null> {
 export async function getTransactionsForUser(
   userId: number,
   limit?: number,
-  offset?: number
+  offset?: number,
+  reviewed?: boolean | null // null = all, true = reviewed only, false = unreviewed only
 ): Promise<TransactionWithCategories[]> {
-  // Get all transactions for user (no date filtering - show all)
+  // Build where conditions
+  let whereCondition;
+  
+  if (reviewed !== null && reviewed !== undefined) {
+    // Both userId and reviewed filter
+    whereCondition = and(
+      eq(plaidTransactions.userId, userId),
+      eq(plaidTransactions.isReviewed, reviewed)
+    );
+  } else {
+    // Only userId filter
+    whereCondition = eq(plaidTransactions.userId, userId);
+  }
+
+  // Build query - order by date (most recent first)
   const query = db
     .select()
     .from(plaidTransactions)
-    .where(eq(plaidTransactions.userId, userId))
+    .where(whereCondition)
     .orderBy(desc(plaidTransactions.date));
 
   const transactions = limit !== undefined
@@ -291,11 +326,12 @@ export async function getMerchantHistory(userId: number, merchantName: string | 
         .select({
           categoryId: transactionCategories.categoryId,
           amount: transactionCategories.amount,
+          subcategoryId: transactionCategories.subcategoryId,
         })
         .from(transactionCategories)
         .where(eq(transactionCategories.transactionId, transaction.id));
 
-      // Get category names
+      // Get category names and subcategories
       const categoriesWithNames = await Promise.all(
         categories.map(async (cat) => {
           const [category] = await db
@@ -304,10 +340,23 @@ export async function getMerchantHistory(userId: number, merchantName: string | 
             .where(eq(budgetCategories.id, cat.categoryId))
             .limit(1);
 
+          // Get subcategory if it exists
+          let subcategoryName: string | null = null;
+          if (cat.subcategoryId) {
+            const [subcategory] = await db
+              .select({ name: budgetCategorySubcategories.name })
+              .from(budgetCategorySubcategories)
+              .where(eq(budgetCategorySubcategories.id, cat.subcategoryId))
+              .limit(1);
+            subcategoryName = subcategory?.name || null;
+          }
+
           return {
             categoryId: cat.categoryId,
             amount: cat.amount,
             categoryName: category?.name || 'Unknown',
+            subcategoryId: cat.subcategoryId || null,
+            subcategoryName: subcategoryName,
           };
         })
       );

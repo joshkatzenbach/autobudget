@@ -26,6 +26,7 @@
     "openai": "^6.10.0",
     "plaid": "^40.0.0",
     "postgres": "^3.4.3",
+    "@slack/web-api": "^7.0.0",
     "zxcvbn": "^4.4.2"
   },
   "devDependencies": {

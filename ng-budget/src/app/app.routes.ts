@@ -17,6 +17,16 @@ export const routes: Routes = [
     canActivate: [authGuard]
   },
   {
+    path: 'messaging',
+    loadComponent: () => import('./components/messaging/messaging.component').then(m => m.MessagingComponent),
+    canActivate: [authGuard]
+  },
+  {
+    path: 'settings/slack',
+    loadComponent: () => import('./components/slack-integration/slack-integration.component').then(m => m.SlackIntegrationComponent),
+    canActivate: [authGuard]
+  },
+  {
     path: '',
     redirectTo: '/budgets',
     pathMatch: 'full'

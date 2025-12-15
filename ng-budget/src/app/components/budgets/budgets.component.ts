@@ -23,13 +23,19 @@ export class BudgetsComponent implements OnInit {
   error = signal<string | null>(null);
   
   // Tab management
-  activeTab = signal<'summary' | 'transactions' | 'analytics'>('summary');
+  activeTab = signal<'summary' | 'transactions' | 'analytics' | 'test'>('summary');
+  
+  // Test tab state
+  generatingTestTransaction = signal(false);
+  testTransactionError = signal<string | null>(null);
+  testTransactionSuccess = signal<string | null>(null);
   
   transactions = signal<TransactionWithCategories[]>([]);
   transactionsLoading = signal(false);
   transactionsError = signal<string | null>(null);
   transactionsOffset = signal(0);
   hasMoreTransactions = signal(true);
+  reviewedFilter = signal<'all' | 'reviewed' | 'unreviewed'>('all');
   
   syncLoading = signal(false);
   
@@ -101,7 +107,9 @@ export class BudgetsComponent implements OnInit {
     this.transactionsLoading.set(true);
     this.transactionsError.set(null);
 
-    this.transactionService.getTransactions(limit, offset).subscribe({
+    const reviewed = this.reviewedFilter() === 'all' ? null : this.reviewedFilter() === 'reviewed';
+
+    this.transactionService.getTransactions(limit, offset, reviewed).subscribe({
       next: (transactions) => {
         // Debug: Log first transaction to verify accountName is present
         if (transactions.length > 0 && offset === 0) {
@@ -147,6 +155,10 @@ export class BudgetsComponent implements OnInit {
   logout() {
     this.authService.logout();
     this.router.navigate(['/login']);
+  }
+
+  navigateToSlackIntegration() {
+    this.router.navigate(['/settings/slack']);
   }
 
   formatDate(dateString: string): string {
@@ -209,6 +221,25 @@ export class BudgetsComponent implements OnInit {
 
   parseAmount(value: string | number): number {
     return typeof value === 'string' ? parseFloat(value) : value;
+  }
+
+  formatTransactionAmount(amount: string | number): string {
+    const numAmount = this.parseAmount(amount);
+    // See PLAID_AMOUNT_CONVENTION.md for full documentation
+    // Plaid convention: positive = debits (outgoing), negative = credits (incoming)
+    // Outgoing money: show as positive (no sign)
+    // Incoming money: show with + sign
+    if (numAmount > 0) {
+      // Outgoing transaction (positive/debit) - show as positive number (no sign)
+      return this.formatCurrency(numAmount);
+    } else {
+      // Incoming transaction (negative/credit) - show with + sign
+      return `+${this.formatCurrency(Math.abs(numAmount))}`;
+    }
+  }
+
+  isIncomingTransaction(amount: string | number): boolean {
+    return this.parseAmount(amount) < 0;
   }
 
   loadCategories() {
@@ -1117,6 +1148,40 @@ export class BudgetsComponent implements OnInit {
     this.editingTransactionId.set(null);
     this.editingSplits().delete(transactionId);
     this.editingSplits.set(new Map(this.editingSplits()));
+  }
+
+  generateTestTransaction() {
+    this.generatingTestTransaction.set(true);
+    this.testTransactionError.set(null);
+    this.testTransactionSuccess.set(null);
+
+    this.plaidService.generateTestTransaction().subscribe({
+      next: (response) => {
+        this.generatingTestTransaction.set(false);
+        this.testTransactionSuccess.set(
+          `Test transaction created! Merchant: ${response.transaction.merchant}, Amount: $${Math.abs(parseFloat(response.transaction.amount)).toFixed(2)}`
+        );
+        
+        // Reload transactions to show the new one
+        this.transactionsOffset.set(0);
+        this.loadTransactions(15, 0);
+        
+        // Clear success message after 5 seconds
+        setTimeout(() => {
+          this.testTransactionSuccess.set(null);
+        }, 5000);
+      },
+      error: (err) => {
+        this.generatingTestTransaction.set(false);
+        this.testTransactionError.set(err.error?.error || 'Failed to generate test transaction');
+      }
+    });
+  }
+
+  onReviewFilterChange() {
+    // Reset offset and reload transactions with new filter
+    this.transactionsOffset.set(0);
+    this.loadTransactions(15, 0);
   }
 }
 

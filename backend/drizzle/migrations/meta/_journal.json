@@ -99,6 +99,34 @@
       "when": 1765090000000,
       "tag": "0013_add_transaction_subcategory",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1765100000000,
+      "tag": "0014_add_twilio_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1765110000000,
+      "tag": "0015_rename_twilio_to_slack",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1765120000000,
+      "tag": "0016_add_slack_notification_channel",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1734200000000,
+      "tag": "0017_add_transaction_reviewed",
+      "breakpoints": true
     }
   ]
 }

@@ -103,6 +103,7 @@ export const plaidTransactions = pgTable('plaid_transactions', {
   plaidCategory: text('plaid_category'), // Plaid's category array as JSON string, e.g., ["Food and Drink", "Restaurants"]
   plaidCategoryId: varchar('plaid_category_id', { length: 255 }), // Plaid's category ID
   isPending: boolean('is_pending').default(false).notNull(), // Whether transaction is pending
+  isReviewed: boolean('is_reviewed').default(false).notNull(), // Whether transaction has been reviewed by user
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -142,4 +143,33 @@ export const monthlyCategorySummaries = pgTable('monthly_category_summaries', {
 }, (table) => ({
   uniqueUserBudgetCategoryMonth: unique().on(table.userId, table.budgetId, table.categoryId, table.year, table.month),
 }));
+
+export const slackMessages = pgTable('slack_messages', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }), // Nullable for incoming from unknown users
+  direction: varchar('direction', { length: 10 }).notNull(), // 'inbound' or 'outbound'
+  fromUserId: varchar('from_user_id', { length: 50 }), // Slack user ID (nullable for bot messages)
+  toChannelId: varchar('to_channel_id', { length: 50 }), // Slack channel ID (for channel messages)
+  toUserId: varchar('to_user_id', { length: 50 }), // Slack user ID (for DMs)
+  channelId: varchar('channel_id', { length: 50 }), // Channel where message was sent/received
+  messageBody: text('message_body').notNull(), // Message content
+  messageTs: varchar('message_ts', { length: 50 }).unique(), // Slack message timestamp (unique identifier)
+  threadTs: varchar('thread_ts', { length: 50 }), // Thread timestamp if message is in a thread
+  status: varchar('status', { length: 20 }), // sent, delivered, failed, received, etc.
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const slackOAuth = pgTable('slack_oauth', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
+  teamId: varchar('team_id', { length: 50 }).notNull(), // Slack workspace ID
+  accessToken: text('access_token').notNull(), // Encrypted Slack access token
+  refreshToken: text('refresh_token'), // Encrypted refresh token (nullable)
+  botUserId: varchar('bot_user_id', { length: 50 }), // Slack bot user ID
+  scope: text('scope'), // OAuth scopes granted
+  notificationGroupDMChannelId: varchar('notification_group_dm_channel_id', { length: 50 }), // Channel ID for notification group DM
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
 

@@ -80,5 +80,20 @@ export class PlaidService {
   updateAccountName(accountId: string, customName: string | null): Observable<any> {
     return this.api.put(`/plaid/accounts/${accountId}/name`, { customName });
   }
+
+  generateTestTransaction(): Observable<{
+    success: boolean;
+    transaction: {
+      id: number;
+      transactionId: string;
+      merchant: string;
+      amount: string;
+      date: string;
+      categoryId: number | null;
+      subcategoryId: number | null;
+    };
+  }> {
+    return this.api.post('/plaid/test/generate-transaction', {});
+  }
 }
 

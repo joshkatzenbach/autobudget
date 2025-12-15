@@ -34,6 +34,17 @@
         (click)="activeTab.set('analytics')">
         Analytics
       </button>
+      <button 
+        class="tab-button" 
+        [class.active]="activeTab() === 'test'"
+        (click)="activeTab.set('test')">
+        Test
+      </button>
+      <button 
+        class="tab-button" 
+        (click)="navigateToSlackIntegration()">
+        Slack Integration
+      </button>
     </div>
   </header>
 
@@ -198,7 +209,17 @@
     <div class="tab-content transactions-tab">
       <!-- Recent Transactions -->
       <div class="transactions-section">
-        <h2>Recent Transactions</h2>
+        <div class="transactions-header">
+          <h2>Recent Transactions</h2>
+          <div class="review-filter">
+            <label>Filter:</label>
+            <select [(ngModel)]="reviewedFilter" (change)="onReviewFilterChange()">
+              <option value="all">All</option>
+              <option value="reviewed">Reviewed</option>
+              <option value="unreviewed">Unreviewed</option>
+            </select>
+          </div>
+        </div>
         @if (transactionsLoading() && transactions().length === 0) {
           <div class="loading-message">Loading transactions...</div>
         } @else if (transactionsError()) {
@@ -218,6 +239,7 @@
                   <th class="col-merchant">Merchant</th>
                   <th class="col-amount">Amount</th>
                   <th class="col-categories">Categories</th>
+                  <th class="col-reviewed">Reviewed</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,8 +250,8 @@
                       <span class="account-name">{{ transaction.accountName || 'Unknown Account' }}</span>
                     </td>
                     <td>{{ transaction.merchantName || transaction.name }}</td>
-                    <td [class.negative]="parseAmount(transaction.amount) < 0">
-                      {{ formatCurrency(parseAmount(transaction.amount)) }}
+                    <td [class.incoming]="isIncomingTransaction(transaction.amount)">
+                      {{ formatTransactionAmount(transaction.amount) }}
                     </td>
                     <td class="categories-cell">
                       <div class="category-rows">
@@ -291,6 +313,13 @@
                         }
                       </div>
                     </td>
+                    <td class="col-status">
+                      @if (transaction.isReviewed) {
+                        <span class="review-icon reviewed">✓</span>
+                      } @else {
+                        <span class="review-icon unreviewed"></span>
+                      }
+                    </td>
                   </tr>
                 }
               </tbody>
@@ -309,6 +338,37 @@
   @if (activeTab() === 'analytics') {
     <div class="tab-content analytics-tab">
       <app-budget-analytics [budget]="budget()" [categories]="categories()"></app-budget-analytics>
+    </div>
+  }
+
+  @if (activeTab() === 'test') {
+    <div class="tab-content test-tab">
+      <div class="test-card">
+        <h2>Test Transaction Generator</h2>
+        <p class="test-description">
+          This tool simulates a Plaid webhook by creating a test transaction, categorizing it with OpenAI, and sending a Slack notification.
+          Use this to test the complete transaction processing flow without waiting for real Plaid webhooks.
+        </p>
+        
+        @if (testTransactionError()) {
+          <div class="alert alert-error">
+            {{ testTransactionError() }}
+          </div>
+        }
+        
+        @if (testTransactionSuccess()) {
+          <div class="alert alert-success">
+            {{ testTransactionSuccess() }}
+          </div>
+        }
+        
+        <button 
+          class="btn-primary" 
+          (click)="generateTestTransaction()"
+          [disabled]="generatingTestTransaction()">
+          {{ generatingTestTransaction() ? 'Generating...' : 'Generate Transaction' }}
+        </button>
+      </div>
     </div>
   }
 
@@ -333,8 +393,8 @@
             </div>
             <div class="detail-row">
               <span class="detail-label">Amount:</span>
-              <span [class.negative]="parseAmount(selectedTransaction()!.amount) < 0">
-                {{ formatCurrency(parseAmount(selectedTransaction()!.amount)) }}
+              <span [class.incoming]="isIncomingTransaction(selectedTransaction()!.amount)">
+                {{ formatTransactionAmount(selectedTransaction()!.amount) }}
               </span>
             </div>
             <div class="detail-row">

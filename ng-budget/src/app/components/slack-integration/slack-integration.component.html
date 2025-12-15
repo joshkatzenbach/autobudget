@@ -1,0 +1,164 @@
+<div class="slack-integration-container">
+  <div class="header">
+    <h1>Slack Integration</h1>
+    <button class="btn-secondary" routerLink="/budgets">Back to Budget</button>
+  </div>
+
+  @if (error()) {
+    <div class="alert alert-error">{{ error() }}</div>
+  }
+
+  @if (success()) {
+    <div class="alert alert-success">{{ success() }}</div>
+  }
+
+  @if (loading()) {
+    <div class="loading">Loading integration status...</div>
+  } @else {
+    @if (!status()?.connected) {
+      <!-- Not Connected State -->
+      <div class="connection-section">
+        <div class="status-card">
+          <div class="status-disconnected">
+            <span class="status-indicator disconnected"></span>
+            <span>Not connected to Slack</span>
+          </div>
+        </div>
+
+        <!-- Instructions for creating a Slack workspace -->
+        <div class="instructions-card">
+          <h2>Getting Started</h2>
+          <p>To receive transaction notifications in Slack, you'll need to:</p>
+          <ol>
+            <li>
+              <strong>Create a Slack workspace</strong> (if you don't have one):
+              <ul>
+                <li>Go to <a href="https://slack.com/create" target="_blank">slack.com/create</a></li>
+                <li>Enter your email address and follow the setup instructions</li>
+                <li>Create a workspace name and invite team members (optional)</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Install the AutoBudget app</strong> in your workspace by clicking the button below
+            </li>
+            <li>
+              <strong>Select users</strong> who should receive transaction notifications
+            </li>
+          </ol>
+        </div>
+
+        <div class="connect-section">
+          <a (click)="connectSlack(); $event.preventDefault()" href="#" class="slack-button">
+            <img 
+              alt="Add to Slack" 
+              height="40" 
+              width="139" 
+              src="https://platform.slack-edge.com/img/add_to_slack.png" 
+              srcset="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x" 
+            />
+          </a>
+          <p class="help-text">Click to install the AutoBudget Slack app in your workspace. You'll be redirected to Slack to authorize the installation.</p>
+        </div>
+      </div>
+    } @else {
+      <!-- Connected State -->
+      <div class="connected-section">
+        <div class="status-card">
+          <div class="status-connected">
+            <span class="status-indicator connected"></span>
+            <span>Connected to Slack</span>
+          </div>
+          @if (status()?.workspace) {
+            <div class="workspace-info">
+              <p><strong>Workspace:</strong> {{ status()!.workspace!.team }}</p>
+              <p><strong>User:</strong> {{ status()!.workspace!.user }}</p>
+            </div>
+          }
+        </div>
+
+        <div class="notifications-section">
+          <h2>Transaction Notifications</h2>
+          <p class="description">
+            Select users who should receive transaction notifications. The bot will create a group DM with you and the selected users, 
+            allowing everyone to see and interact with transaction updates.
+          </p>
+
+          @if (status()?.notificationChannelId) {
+            <div class="alert alert-info">
+              <strong>Notifications are active!</strong> A group DM has been created with the selected users.
+            </div>
+          }
+
+          @if (loadingUsers()) {
+            <div class="loading">Loading users...</div>
+          } @else if (users().length === 0) {
+            <div class="no-users">No users found in your workspace.</div>
+          } @else {
+            <div class="users-selection">
+              <div class="selection-header">
+                <span class="selection-count">
+                  {{ selectedUserIds().length }} user{{ selectedUserIds().length !== 1 ? 's' : '' }} selected
+                  @if (selectedUserIds().length > 0) {
+                    <button class="btn-clear" (click)="clearNotifications()" [disabled]="saving()">
+                      Clear
+                    </button>
+                  }
+                </span>
+              </div>
+              <div class="users-list">
+                @for (user of users(); track user.id) {
+                  <label class="user-checkbox">
+                    <input
+                      type="checkbox"
+                      [checked]="isUserSelected(user.id)"
+                      (change)="toggleUserSelection(user.id)"
+                      [disabled]="saving()"
+                    />
+                    <span class="user-name">{{ user.display_name || user.real_name || user.name }}</span>
+                    @if (user.real_name && user.real_name !== user.name) {
+                      <span class="user-username">@{{ user.name }}</span>
+                    }
+                  </label>
+                }
+              </div>
+              <button
+                type="button"
+                class="btn btn-primary"
+                (click)="saveNotificationSettings()"
+                [disabled]="saving() || selectedUserIds().length === 0"
+              >
+                {{ saving() ? 'Saving...' : 'Save Notification Settings' }}
+              </button>
+            </div>
+          }
+        </div>
+
+        <!-- Test Message Section -->
+        @if (status()?.connected && status()?.notificationChannelId) {
+          <div class="test-message-card">
+            <h2>Test Message</h2>
+            <p class="description">Send a test message to verify notifications are working.</p>
+            <div class="test-message-form">
+              <textarea
+                [(ngModel)]="testMessage"
+                placeholder="Enter your test message here..."
+                rows="3"
+                [disabled]="sendingTest()"
+                class="test-message-input"
+              ></textarea>
+              <button
+                type="button"
+                class="btn btn-primary"
+                (click)="sendTestMessage()"
+                [disabled]="sendingTest() || !testMessage().trim()"
+              >
+                {{ sendingTest() ? 'Sending...' : 'Send Test Message' }}
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+    }
+  }
+</div>
+

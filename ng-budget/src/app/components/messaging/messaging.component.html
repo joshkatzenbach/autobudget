@@ -1,0 +1,315 @@
+<div class="messaging-container">
+  <div class="header">
+    <h1>Slack Integration Testing</h1>
+    <button class="refresh-btn" (click)="loadMessages()" [disabled]="loading()">
+      {{ loading() ? 'Loading...' : 'Refresh Messages' }}
+    </button>
+  </div>
+
+  @if (error()) {
+    <div class="alert alert-error">{{ error() }}</div>
+  }
+
+  @if (success()) {
+    <div class="alert alert-success">{{ success() }}</div>
+  }
+
+  <!-- Connection Status -->
+  <div class="connection-section">
+    <div class="status-card">
+      <h2>Slack Connection Status</h2>
+      @if (testingAuth()) {
+        <div class="status-loading">Checking connection...</div>
+      } @else {
+        <div class="status-info">
+          @if (authStatus().connected) {
+            <div class="status-connected">
+              <span class="status-indicator connected"></span>
+              <span>Connected to Slack</span>
+            </div>
+            @if (authStatus().info) {
+              <div class="auth-details">
+                <p><strong>User:</strong> {{ authStatus().info.user }}</p>
+                <p><strong>Team:</strong> {{ authStatus().info.team }}</p>
+                <p><strong>Team ID:</strong> {{ authStatus().info.team_id }}</p>
+                <p><strong>User ID:</strong> {{ authStatus().info.user_id }}</p>
+              </div>
+            }
+          } @else {
+            <div class="status-disconnected">
+              <span class="status-indicator disconnected"></span>
+              <span>Not connected to Slack</span>
+            </div>
+          }
+        </div>
+        <div class="status-actions">
+          @if (!authStatus().connected) {
+            <a (click)="connectSlack(); $event.preventDefault()" href="#" class="slack-button">
+              <img 
+                alt="Add to Slack" 
+                height="40" 
+                width="139" 
+                src="https://platform.slack-edge.com/img/add_to_slack.png" 
+                srcset="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x" 
+              />
+            </a>
+            <p class="help-text">Click to install the AutoBudget Slack app in your workspace. You'll be redirected to Slack to authorize the installation.</p>
+          }
+          <button class="btn btn-secondary" (click)="testAuth()" [disabled]="testingAuth()">
+            {{ testingAuth() ? 'Testing...' : 'Test Connection' }}
+          </button>
+        </div>
+      }
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Create Channel Section -->
+    <div class="action-section">
+      <h2>Create Channel</h2>
+      <form (ngSubmit)="createChannel()" class="form">
+        <div class="form-group">
+          <label for="channelName">Channel Name</label>
+          <input
+            type="text"
+            id="channelName"
+            [(ngModel)]="channelForm.name"
+            name="channelName"
+            placeholder="e.g., test-channel"
+            required
+            [disabled]="creatingChannel() || !authStatus().connected"
+            (input)="channelForm.name = channelForm.name.toLowerCase()"
+          />
+          <small>Channel names must be lowercase, 21 characters or less, and can only contain letters, numbers, hyphens (-), and underscores (_). Spaces will be converted to hyphens.</small>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              [(ngModel)]="channelForm.isPrivate"
+              name="isPrivate"
+              [disabled]="creatingChannel() || !authStatus().connected"
+            />
+            <span>Private Channel</span>
+          </label>
+        </div>
+        <button
+          type="submit"
+          class="btn btn-primary"
+          [disabled]="creatingChannel() || !channelForm.name.trim() || !authStatus().connected"
+        >
+          {{ creatingChannel() ? 'Creating...' : 'Create Channel' }}
+        </button>
+      </form>
+    </div>
+
+    <!-- Create Group DM Section -->
+    <div class="action-section">
+      <h2>Create Group DM</h2>
+      <p class="help-text">Select 2-8 users to create a group direct message. The bot will be included automatically.</p>
+      @if (!authStatus().connected) {
+        <div class="no-channels">Connect your Slack account to create group DMs</div>
+      } @else if (loadingUsers()) {
+        <div class="loading">Loading users...</div>
+      } @else {
+        <div class="form">
+          <div class="form-group">
+            <label>Select Users ({{ groupDMForm.selectedUserIds.length }}/8 selected)</label>
+            <div class="users-selection">
+              @for (user of users(); track user.id) {
+                @if (!user.is_bot && !user.is_deleted) {
+                  <label class="user-checkbox">
+                    <input
+                      type="checkbox"
+                      [checked]="isUserSelected(user.id)"
+                      (change)="toggleUserSelection(user.id)"
+                      [disabled]="creatingGroupDM()"
+                    />
+                    <span>{{ user.display_name || user.real_name || user.name }}</span>
+                  </label>
+                }
+              }
+            </div>
+          </div>
+          <button
+            type="button"
+            class="btn btn-primary"
+            (click)="createGroupDM()"
+            [disabled]="creatingGroupDM() || groupDMForm.selectedUserIds.length < 2 || !authStatus().connected"
+          >
+            {{ creatingGroupDM() ? 'Creating...' : 'Create Group DM' }}
+          </button>
+        </div>
+      }
+    </div>
+
+    <!-- Send Message Section -->
+    <div class="action-section">
+      <h2>Send Message</h2>
+      <form (ngSubmit)="sendMessage()" class="form">
+        <div class="form-group">
+          <label for="channelId">Channel ID</label>
+          <input
+            type="text"
+            id="channelId"
+            [(ngModel)]="messageForm.channelId"
+            name="channelId"
+            placeholder="e.g., C1234567890"
+            required
+            [disabled]="sending() || !authStatus().connected"
+          />
+          <small>Enter a Slack channel ID (starts with 'C' for public, 'G' for private, 'D' for DM)</small>
+        </div>
+        <div class="form-group">
+          <label for="message">Message</label>
+          <textarea
+            id="message"
+            [(ngModel)]="messageForm.message"
+            name="message"
+            placeholder="Enter your message..."
+            rows="4"
+            required
+            [disabled]="sending() || !authStatus().connected"
+          ></textarea>
+        </div>
+        <button
+          type="submit"
+          class="btn btn-primary"
+          [disabled]="sending() || !messageForm.message.trim() || !messageForm.channelId.trim() || !authStatus().connected"
+        >
+          {{ sending() ? 'Sending...' : 'Send Message' }}
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Channels List -->
+  <div class="channels-section">
+    <div class="section-header">
+      <h2>Available Channels</h2>
+      <button class="btn btn-secondary" (click)="loadChannels()" [disabled]="loadingChannels() || !authStatus().connected">
+        {{ loadingChannels() ? 'Loading...' : 'Refresh' }}
+      </button>
+    </div>
+    @if (!authStatus().connected) {
+      <div class="no-channels">Connect your Slack account to view channels</div>
+    } @else if (loadingChannels()) {
+      <div class="loading">Loading channels...</div>
+    } @else if (channels().length === 0) {
+      <div class="no-channels">No channels found. Create a channel to get started!</div>
+    } @else {
+      <div class="channels-list">
+        @for (channel of channels(); track channel.id) {
+          <div class="channel-item" [class.private]="channel.is_private">
+            <div class="channel-info">
+              <span class="channel-name">{{ channel.name }}</span>
+              <span class="channel-badge" [class.private]="channel.is_private">
+                {{ channel.is_private ? 'Private' : 'Public' }}
+              </span>
+            </div>
+            <div class="channel-actions">
+              <span class="channel-id">{{ channel.id }}</span>
+              <div class="action-buttons">
+                @if (!channel.is_member && !channel.is_private) {
+                  <button 
+                    class="btn-small btn-join" 
+                    (click)="joinChannel(channel.id)"
+                    [disabled]="joiningChannel() === channel.id"
+                    title="Join this channel"
+                  >
+                    {{ joiningChannel() === channel.id ? 'Joining...' : 'Join' }}
+                  </button>
+                }
+                <button 
+                  class="btn-small" 
+                  (click)="messageForm.channelId = channel.id"
+                  title="Use this channel ID"
+                  [disabled]="!channel.is_member && !channel.is_private"
+                >
+                  Use
+                </button>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+  <!-- Users List -->
+  <div class="channels-section">
+    <div class="section-header">
+      <h2>Workspace Users</h2>
+      <button class="btn btn-secondary" (click)="loadUsers()" [disabled]="loadingUsers() || !authStatus().connected">
+        {{ loadingUsers() ? 'Loading...' : 'Refresh' }}
+      </button>
+    </div>
+    @if (!authStatus().connected) {
+      <div class="no-channels">Connect your Slack account to view users</div>
+    } @else if (loadingUsers()) {
+      <div class="loading">Loading users...</div>
+    } @else if (users().length === 0) {
+      <div class="no-channels">No users found.</div>
+    } @else {
+      <div class="channels-list">
+        @for (user of users(); track user.id) {
+          <div class="channel-item" [class.bot]="user.is_bot">
+            <div class="channel-info">
+              <span class="channel-name">{{ user.display_name || user.real_name || user.name }}</span>
+              @if (user.is_bot) {
+                <span class="channel-badge bot">Bot</span>
+              }
+              <span class="channel-badge user">User</span>
+            </div>
+            <div class="channel-actions">
+              <span class="channel-id">{{ user.id }}</span>
+              <button 
+                class="btn-small" 
+                (click)="messageForm.channelId = user.id"
+                title="Send DM to this user (use user ID as channel ID)"
+              >
+                DM
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+  <!-- Messages List -->
+  <div class="messages-section">
+    <h2>Message History</h2>
+    @if (loading()) {
+      <div class="loading">Loading messages...</div>
+    } @else if (messages().length === 0) {
+      <div class="no-messages">No messages yet. Send a message to get started!</div>
+    } @else {
+      <div class="messages-list">
+        @for (message of messages(); track message.id) {
+          <div class="message-item" [class.inbound]="message.direction === 'inbound'" [class.outbound]="message.direction === 'outbound'">
+            <div class="message-header">
+              <span class="direction-badge" [class.inbound]="message.direction === 'inbound'" [class.outbound]="message.direction === 'outbound'">
+                {{ message.direction === 'inbound' ? 'Received' : 'Sent' }}
+              </span>
+              <span class="channel-info">
+                Channel: {{ formatChannelId(message.channelId) }}
+              </span>
+              @if (message.fromUserId) {
+                <span class="user-info">From: {{ message.fromUserId }}</span>
+              }
+              <span class="timestamp">{{ formatDate(message.createdAt) }}</span>
+            </div>
+            <div class="message-body">{{ message.messageBody }}</div>
+            @if (message.threadTs) {
+              <div class="thread-info">Thread: {{ message.threadTs }}</div>
+            }
+            @if (message.status) {
+              <div class="message-status">Status: {{ message.status }}</div>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+</div>
