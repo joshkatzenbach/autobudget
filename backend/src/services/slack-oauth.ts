@@ -44,7 +44,7 @@ export async function exchangeCodeForToken(
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!data.ok) {
       throw new Error(data.error || 'Failed to exchange code for token');
@@ -193,7 +193,7 @@ export async function refreshAccessToken(userId: number): Promise<string | null>
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!data.ok) {
       throw new Error(data.error || 'Failed to refresh token');

@@ -3,10 +3,10 @@ import {
   plaidTransactions, 
   transactionCategories, 
   budgetCategories, 
-  budgetCategorySubcategories,
   plaidAccounts,
   budgets,
-  slackOAuth
+  slackOAuth,
+  fundMovements
 } from '../db/schema';
 import { eq, and, gte, lte, sql, isNull, or } from 'drizzle-orm';
 import { createSlackClient } from './slack';
@@ -14,13 +14,12 @@ import { getUserAccessToken, getNotificationChannel } from './slack-oauth';
 import { assignTransactionCategory } from './transactions';
 
 /**
- * Calculate spending stats for a category or subcategory in the current month
+ * Calculate spending stats for a category in the current month
  */
 export async function getCategorySpendingStats(
   userId: number,
   budgetId: number,
-  categoryId: number,
-  subcategoryId: number | null = null
+  categoryId: number
 ): Promise<{
   spent: number;
   allotted: number;
@@ -46,66 +45,27 @@ export async function getCategorySpendingStats(
     return { spent: 0, allotted: 0, percentage: 0 };
   }
 
-  // Calculate spent amount
-  let spent = 0;
-  if (subcategoryId) {
-    // Calculate spending for subcategory
-    const spendingData = await db
-      .select({
-        amount: sql<string>`SUM(ABS(CAST(${transactionCategories.amount} AS NUMERIC)))`.as('total'),
-      })
-      .from(transactionCategories)
-      .innerJoin(plaidTransactions, eq(transactionCategories.transactionId, plaidTransactions.id))
-      .where(
-        and(
-          eq(plaidTransactions.userId, userId),
-          eq(transactionCategories.categoryId, categoryId),
-          eq(transactionCategories.subcategoryId, subcategoryId),
-          gte(plaidTransactions.date, startDate),
-          lte(plaidTransactions.date, endDate)
-        )
-      );
+  // Calculate spending for category
+  const spendingData = await db
+    .select({
+      amount: sql<string>`SUM(ABS(CAST(${transactionCategories.amount} AS NUMERIC)))`.as('total'),
+    })
+    .from(transactionCategories)
+    .innerJoin(plaidTransactions, eq(transactionCategories.transactionId, plaidTransactions.id))
+    .where(
+      and(
+        eq(plaidTransactions.userId, userId),
+        eq(transactionCategories.categoryId, categoryId),
+        gte(plaidTransactions.date, startDate),
+        lte(plaidTransactions.date, endDate)
+      )
+    );
 
-    spent = parseFloat(spendingData[0]?.amount || '0') || 0;
+  const spent = parseFloat(spendingData[0]?.amount || '0') || 0;
+  const allotted = parseFloat(category.allocatedAmount || '0') || 0;
+  const percentage = allotted > 0 ? (spent / allotted) * 100 : 0;
 
-    // Get subcategory allotted amount
-    const [subcategory] = await db
-      .select()
-      .from(budgetCategorySubcategories)
-      .where(and(
-        eq(budgetCategorySubcategories.id, subcategoryId),
-        eq(budgetCategorySubcategories.categoryId, categoryId)
-      ))
-      .limit(1);
-
-    const allotted = parseFloat(subcategory?.expectedAmount || '0') || 0;
-    const percentage = allotted > 0 ? (spent / allotted) * 100 : 0;
-
-    return { spent, allotted, percentage };
-  } else {
-    // Calculate spending for category (includes all transactions, including subcategory ones)
-    // This gives total category spending regardless of subcategory
-    const spendingData = await db
-      .select({
-        amount: sql<string>`SUM(ABS(CAST(${transactionCategories.amount} AS NUMERIC)))`.as('total'),
-      })
-      .from(transactionCategories)
-      .innerJoin(plaidTransactions, eq(transactionCategories.transactionId, plaidTransactions.id))
-      .where(
-        and(
-          eq(plaidTransactions.userId, userId),
-          eq(transactionCategories.categoryId, categoryId),
-          gte(plaidTransactions.date, startDate),
-          lte(plaidTransactions.date, endDate)
-        )
-      );
-
-    spent = parseFloat(spendingData[0]?.amount || '0') || 0;
-    const allotted = parseFloat(category.allocatedAmount || '0') || 0;
-    const percentage = allotted > 0 ? (spent / allotted) * 100 : 0;
-
-    return { spent, allotted, percentage };
-  }
+  return { spent, allotted, percentage };
 }
 
 /**
@@ -114,8 +74,7 @@ export async function getCategorySpendingStats(
 export async function sendTransactionNotification(
   userId: number,
   transactionId: number,
-  categoryId: number | null,
-  subcategoryId: number | null
+  categoryId: number | null
 ): Promise<void> {
   try {
     // Get user's Slack notification channel
@@ -192,21 +151,8 @@ export async function sendTransactionNotification(
       if (category) {
         categoryName = category.name;
 
-        // Get subcategory name if applicable
-        if (subcategoryId) {
-          const [subcategory] = await db
-            .select()
-            .from(budgetCategorySubcategories)
-            .where(eq(budgetCategorySubcategories.id, subcategoryId))
-            .limit(1);
-
-          if (subcategory) {
-            categoryName = `${category.name} - ${subcategory.name}`;
-          }
-        }
-
         // Get spending stats
-        const stats = await getCategorySpendingStats(userId, budget.id, categoryId, subcategoryId);
+        const stats = await getCategorySpendingStats(userId, budget.id, categoryId);
         spent = stats.spent;
         allotted = stats.allotted;
         percentage = stats.percentage;
@@ -222,17 +168,16 @@ export async function sendTransactionNotification(
         eq(budgetCategories.budgetId, budget.id),
         or(
           eq(budgetCategories.categoryType, 'variable'),
-          eq(budgetCategories.categoryType, 'expected'),
+          eq(budgetCategories.categoryType, 'fixed'),
           eq(budgetCategories.categoryType, 'savings'),
           eq(budgetCategories.categoryType, 'excluded')
         )
       ));
 
-    // Build list of buttons: for categories with subcategories, show subcategories; otherwise show category
+    // Build list of buttons for categories
     interface ButtonOption {
       text: string;
       categoryId: number;
-      subcategoryId: number | null;
     }
 
     const buttonOptions: ButtonOption[] = [];
@@ -243,29 +188,11 @@ export async function sendTransactionNotification(
         continue;
       }
 
-      // Check if category has subcategories
-      const subcategories = await db
-        .select()
-        .from(budgetCategorySubcategories)
-        .where(eq(budgetCategorySubcategories.categoryId, cat.id));
-
-      if (subcategories.length > 0) {
-        // Add buttons for each subcategory
-        for (const subcat of subcategories) {
-          buttonOptions.push({
-            text: `${cat.name} - ${subcat.name}`,
-            categoryId: cat.id,
-            subcategoryId: subcat.id
-          });
-        }
-      } else {
-        // Add button for category itself
-        buttonOptions.push({
-          text: cat.name,
-          categoryId: cat.id,
-          subcategoryId: null
-        });
-      }
+      // Add button for category
+      buttonOptions.push({
+        text: cat.name,
+        categoryId: cat.id
+      });
     }
 
     // Sort alphabetically by text
@@ -312,7 +239,7 @@ export async function sendTransactionNotification(
       }
     }
 
-    const blocks = [
+    const blocks: any[] = [
       {
         type: 'section',
         text: {
@@ -324,10 +251,10 @@ export async function sendTransactionNotification(
 
     // Add context block with transaction ID (less prominent)
     blocks.push({
-      type: 'context',
+      type: 'context' as const,
       elements: [
         {
-          type: 'mrkdwn',
+          type: 'mrkdwn' as const,
           text: `Transaction ID: ${transactionId}`
         }
       ]
@@ -363,16 +290,16 @@ export async function sendTransactionNotification(
           type: 'plain_text' as const,
           text: option.text
         },
-        value: `category_${transactionId}_${option.categoryId}${option.subcategoryId ? `_${option.subcategoryId}` : ''}`,
-        action_id: `transaction_category_${option.categoryId}${option.subcategoryId ? `_${option.subcategoryId}` : ''}`
-      };
+        value: `category_${transactionId}_${option.categoryId}`,
+        action_id: `transaction_category_${option.categoryId}`
+      } as any;
 
       if (buttonsInCurrentBlock < maxButtonsPerBlock) {
         currentBlock.elements.push(button);
         buttonsInCurrentBlock++;
       } else {
         // Create new action block
-        blocks.push(currentBlock);
+        blocks.push(currentBlock as any);
         currentBlock = {
           type: 'actions' as const,
           elements: [button]
@@ -383,7 +310,7 @@ export async function sendTransactionNotification(
 
     // Add the last action block if it has buttons
     if (currentBlock.elements.length > 0) {
-      blocks.push(currentBlock);
+      blocks.push(currentBlock as any);
     }
 
     // Add Split button in a separate action block (different color/style)
@@ -401,7 +328,7 @@ export async function sendTransactionNotification(
           action_id: 'transaction_split'
         }
       ]
-    });
+    } as any);
 
     // Send message with blocks
     const slackClient = createSlackClient(accessToken);
@@ -415,6 +342,122 @@ export async function sendTransactionNotification(
   } catch (error: any) {
     console.error('Error sending transaction notification to Slack:', error);
     // Don't throw - we don't want to fail the webhook if Slack fails
+  }
+}
+
+/**
+ * Send notification for Variable category surplus/deficit at month end
+ */
+export async function sendVariableSurplusDeficitNotification(
+  userId: number,
+  variableCategoryId: number,
+  movementType: 'surplus' | 'deficit',
+  amount: number,
+  year: number,
+  month: number
+): Promise<void> {
+  try {
+    // Get user's Slack notification channel
+    const notificationChannelId = await getNotificationChannel(userId);
+    if (!notificationChannelId) {
+      console.log(`No Slack notification channel configured for user ${userId}`);
+      return;
+    }
+
+    // Get user's access token
+    const accessToken = await getUserAccessToken(userId);
+    if (!accessToken) {
+      console.log(`No Slack access token for user ${userId}`);
+      return;
+    }
+
+    // Get budget
+    const [budget] = await db
+      .select()
+      .from(budgets)
+      .where(and(
+        eq(budgets.userId, userId),
+        eq(budgets.isActive, true)
+      ))
+      .limit(1);
+
+    if (!budget) {
+      console.error(`No active budget found for user ${userId}`);
+      return;
+    }
+
+    // Get variable category
+    const [variableCategory] = await db
+      .select()
+      .from(budgetCategories)
+      .where(and(
+        eq(budgetCategories.id, variableCategoryId),
+        eq(budgetCategories.budgetId, budget.id)
+      ))
+      .limit(1);
+
+    if (!variableCategory) {
+      console.error(`Variable category ${variableCategoryId} not found`);
+      return;
+    }
+
+    // Get all savings categories for buttons
+    const savingsCategories = await db
+      .select()
+      .from(budgetCategories)
+      .where(and(
+        eq(budgetCategories.budgetId, budget.id),
+        eq(budgetCategories.categoryType, 'savings')
+      ));
+
+    if (savingsCategories.length === 0) {
+      console.log(`No savings categories found for user ${userId}`);
+      return;
+    }
+
+    const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+    const messageText = movementType === 'surplus'
+      ? `💰 *${variableCategory.name}* has a *surplus* of $${amount.toFixed(2)} for ${monthName} ${year}.\n\nWhere would you like to move this surplus?`
+      : `⚠️ *${variableCategory.name}* has a *deficit* of $${amount.toFixed(2)} for ${monthName} ${year}.\n\nWhich savings category should cover this deficit?`;
+
+    // Create buttons for each savings category
+    const buttons = savingsCategories.slice(0, 5).map(cat => ({
+      type: 'button' as const,
+      text: {
+        type: 'plain_text' as const,
+        text: cat.name
+      },
+      value: `move_${movementType}_${variableCategoryId}_${cat.id}_${year}_${month}_${amount.toFixed(2)}`,
+      action_id: `variable_${movementType}_move`
+    }));
+
+    const blocks: any[] = [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: messageText
+        }
+      }
+    ];
+
+    if (buttons.length > 0) {
+      blocks.push({
+        type: 'actions',
+        elements: buttons
+      } as any);
+    }
+
+    const slackClient = createSlackClient(accessToken);
+    await slackClient.chat.postMessage({
+      channel: notificationChannelId,
+      text: messageText,
+      blocks: blocks as any,
+    });
+
+    console.log(`Sent ${movementType} notification for category ${variableCategory.name}`);
+  } catch (error: any) {
+    console.error(`Error sending ${movementType} notification:`, error);
   }
 }
 

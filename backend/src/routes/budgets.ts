@@ -11,12 +11,13 @@ import {
   getBudgetCategoryById,
   updateBudgetCategory,
   deleteBudgetCategory,
-  createBudgetCategorySubcategory,
-  getBudgetCategorySubcategories,
-  updateBudgetCategorySubcategory,
-  deleteBudgetCategorySubcategory,
-  reduceBufferCategories,
 } from '../services/budgets';
+
+// Helper to get budget ID from user ID
+async function getUserBudgetId(userId: number): Promise<number | null> {
+  const budget = await getUserBudget(userId);
+  return budget?.id || null;
+}
 
 const router = Router();
 
@@ -107,10 +108,19 @@ router.post('/categories', async (req: AuthRequest, res: Response) => {
       allocatedAmount,
       categoryType,
       accumulatedTotal,
-      estimationMonths,
-      isBufferCategory,
-      bufferPriority,
       color,
+      // Variable category fields
+      autoMoveSurplus,
+      surplusTargetCategoryId,
+      autoMoveDeficit,
+      deficitSourceCategoryId,
+      // Fixed category fields
+      expectedMerchantName,
+      hideFromTransactionLists,
+      // Savings category fields
+      isTaxDeductible,
+      isSubjectToFica,
+      isUnconnectedAccount,
     } = req.body;
 
     if (!name || !allocatedAmount) {
@@ -123,10 +133,16 @@ router.post('/categories', async (req: AuthRequest, res: Response) => {
       allocatedAmount,
       categoryType,
       accumulatedTotal,
-      estimationMonths,
-      isBufferCategory,
-      bufferPriority,
-      color
+      color,
+      autoMoveSurplus,
+      surplusTargetCategoryId,
+      autoMoveDeficit,
+      deficitSourceCategoryId,
+      expectedMerchantName,
+      hideFromTransactionLists,
+      isTaxDeductible,
+      isSubjectToFica,
+      isUnconnectedAccount
     );
     res.status(201).json(category);
   } catch (error: any) {
@@ -188,10 +204,19 @@ router.put('/categories/:categoryId', async (req: AuthRequest, res: Response) =>
       spentAmount,
       categoryType,
       accumulatedTotal,
-      estimationMonths,
-      isBufferCategory,
-      bufferPriority,
       color,
+      // Variable category fields
+      autoMoveSurplus,
+      surplusTargetCategoryId,
+      autoMoveDeficit,
+      deficitSourceCategoryId,
+      // Fixed category fields
+      expectedMerchantName,
+      hideFromTransactionLists,
+      // Savings category fields
+      isTaxDeductible,
+      isSubjectToFica,
+      isUnconnectedAccount,
     } = req.body;
 
     const category = await updateBudgetCategory(categoryId, req.userId!, {
@@ -200,11 +225,18 @@ router.put('/categories/:categoryId', async (req: AuthRequest, res: Response) =>
       spentAmount,
       categoryType,
       accumulatedTotal,
-      estimationMonths,
-      isBufferCategory,
-      bufferPriority,
       color,
+      autoMoveSurplus,
+      surplusTargetCategoryId,
+      autoMoveDeficit,
+      deficitSourceCategoryId,
+      expectedMerchantName,
+      hideFromTransactionLists,
+      isTaxDeductible,
+      isSubjectToFica,
+      isUnconnectedAccount,
     });
+
 
     if (!category) {
       return res.status(404).json({ error: 'Category not found' });
@@ -244,148 +276,97 @@ router.delete('/categories/:categoryId', async (req: AuthRequest, res: Response)
   }
 });
 
-// Budget Category Subcategory endpoints (no budgetId in URL)
-router.post('/categories/:categoryId/subcategories', async (req: AuthRequest, res: Response) => {
+// End-of-month processing endpoint
+router.post('/process-month-end', async (req: AuthRequest, res: Response) => {
   try {
-    const categoryId = parseInt(req.params.categoryId);
-    
-    if (isNaN(categoryId)) {
-      return res.status(400).json({ error: 'Invalid category ID' });
+    const { year, month } = req.body;
+
+    if (!year || !month) {
+      return res.status(400).json({ error: 'Year and month are required' });
     }
 
-    const { name, expectedAmount, useEstimation, estimationMonths } = req.body;
-
-    if (!name || !expectedAmount) {
-      return res.status(400).json({ error: 'Name and expectedAmount are required' });
+    if (month < 1 || month > 12) {
+      return res.status(400).json({ error: 'Month must be between 1 and 12' });
     }
 
-    const subcategory = await createBudgetCategorySubcategory(
-      categoryId,
-      req.userId!,
-      name,
-      expectedAmount,
-      useEstimation,
-      estimationMonths
-    );
+    const { processMonthEnd } = await import('../services/month-end');
+    const result = await processMonthEnd({
+      userId: req.userId!,
+      year: parseInt(year),
+      month: parseInt(month),
+    });
 
-    if (!subcategory) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-
-    res.status(201).json(subcategory);
+    res.json({
+      success: true,
+      ...result,
+    });
   } catch (error: any) {
-    console.error('Create subcategory error:', error);
-    if (error.message?.includes('Only Expected')) {
-      return res.status(400).json({ error: error.message });
-    }
-    res.status(500).json({ error: 'Failed to create subcategory' });
+    console.error('Process month end error:', error);
+    res.status(500).json({ error: error.message || 'Failed to process month end' });
   }
 });
 
-router.get('/categories/:categoryId/subcategories', async (req: AuthRequest, res: Response) => {
+// Get savings snapshots
+router.get('/savings-snapshots', async (req: AuthRequest, res: Response) => {
   try {
-    const categoryId = parseInt(req.params.categoryId);
-    
-    if (isNaN(categoryId)) {
-      return res.status(400).json({ error: 'Invalid category ID' });
-    }
+    const { savingsSnapshots } = await import('../db/schema');
+    const { eq, and, desc } = await import('drizzle-orm');
+    const { db } = await import('../db');
 
-    const subcategories = await getBudgetCategorySubcategories(categoryId, req.userId!);
-
-    if (subcategories === null) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-
-    res.json(subcategories);
-  } catch (error) {
-    console.error('Get subcategories error:', error);
-    res.status(500).json({ error: 'Failed to fetch subcategories' });
-  }
-});
-
-router.put('/categories/:categoryId/subcategories/:subcategoryId', async (req: AuthRequest, res: Response) => {
-  try {
-    const categoryId = parseInt(req.params.categoryId);
-    const subcategoryId = parseInt(req.params.subcategoryId);
-    
-    if (isNaN(categoryId) || isNaN(subcategoryId)) {
-      return res.status(400).json({ error: 'Invalid category or subcategory ID' });
-    }
-
-    const { name, expectedAmount, actualAmount, billDate, useEstimation, estimationMonths } = req.body;
-
-    const subcategory = await updateBudgetCategorySubcategory(
-      subcategoryId,
-      categoryId,
-      req.userId!,
-      {
-        name,
-        expectedAmount,
-        actualAmount,
-        billDate,
-        useEstimation,
-        estimationMonths,
-      }
-    );
-
-    if (!subcategory) {
-      return res.status(404).json({ error: 'Subcategory not found' });
-    }
-
-    res.json(subcategory);
-  } catch (error) {
-    console.error('Update subcategory error:', error);
-    res.status(500).json({ error: 'Failed to update subcategory' });
-  }
-});
-
-router.delete('/categories/:categoryId/subcategories/:subcategoryId', async (req: AuthRequest, res: Response) => {
-  try {
-    const categoryId = parseInt(req.params.categoryId);
-    const subcategoryId = parseInt(req.params.subcategoryId);
-    
-    if (isNaN(categoryId) || isNaN(subcategoryId)) {
-      return res.status(400).json({ error: 'Invalid category or subcategory ID' });
-    }
-
-    const deleted = await deleteBudgetCategorySubcategory(subcategoryId, categoryId, req.userId!);
-
-    if (!deleted) {
-      return res.status(404).json({ error: 'Subcategory not found' });
-    }
-
-    res.status(204).send();
-  } catch (error) {
-    console.error('Delete subcategory error:', error);
-    res.status(500).json({ error: 'Failed to delete subcategory' });
-  }
-});
-
-// Buffer reduction endpoint
-router.post('/categories/:categoryId/reduce-buffer', async (req: AuthRequest, res: Response) => {
-  try {
-    const categoryId = parseInt(req.params.categoryId);
-    
-    if (isNaN(categoryId)) {
-      return res.status(400).json({ error: 'Invalid category ID' });
-    }
-
-    const { overageAmount } = req.body;
-
-    if (!overageAmount || overageAmount <= 0) {
-      return res.status(400).json({ error: 'Valid overageAmount is required' });
-    }
-
-    const result = await reduceBufferCategories(req.userId!, overageAmount);
-
-    if (!result) {
+    const budgetId = await getUserBudgetId(req.userId!);
+    if (!budgetId) {
       return res.status(404).json({ error: 'Budget not found' });
     }
 
-    res.json(result);
-  } catch (error) {
-    console.error('Reduce buffer error:', error);
-    res.status(500).json({ error: 'Failed to reduce buffer categories' });
+    const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : undefined;
+
+    let conditions = [
+      eq(savingsSnapshots.userId, req.userId!),
+      eq(savingsSnapshots.budgetId, budgetId)
+    ];
+
+    if (categoryId) {
+      conditions.push(eq(savingsSnapshots.categoryId, categoryId));
+    }
+
+    const snapshots = await db
+      .select()
+      .from(savingsSnapshots)
+      .where(and(...conditions))
+      .orderBy(desc(savingsSnapshots.year), desc(savingsSnapshots.month));
+
+    res.json(snapshots);
+  } catch (error: any) {
+    console.error('Get savings snapshots error:', error);
+    res.status(500).json({ error: 'Failed to get savings snapshots' });
+  }
+});
+
+// Get fund movements
+router.get('/fund-movements', async (req: AuthRequest, res: Response) => {
+  try {
+    const { fundMovements } = await import('../db/schema');
+    const { eq, and, desc } = await import('drizzle-orm');
+    const { db } = await import('../db');
+
+    const budgetId = await getUserBudgetId(req.userId!);
+    if (!budgetId) {
+      return res.status(404).json({ error: 'Budget not found' });
+    }
+
+    const movements = await db
+      .select()
+      .from(fundMovements)
+      .where(and(
+        eq(fundMovements.userId, req.userId!),
+        eq(fundMovements.budgetId, budgetId)
+      ))
+      .orderBy(desc(fundMovements.year), desc(fundMovements.month), desc(fundMovements.createdAt));
+
+    res.json(movements);
+  } catch (error: any) {
+    console.error('Get fund movements error:', error);
+    res.status(500).json({ error: 'Failed to get fund movements' });
   }
 });
 

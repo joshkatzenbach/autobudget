@@ -90,7 +90,6 @@ export class PlaidService {
       amount: string;
       date: string;
       categoryId: number | null;
-      subcategoryId: number | null;
     };
   }> {
     return this.api.post('/plaid/test/generate-transaction', {});

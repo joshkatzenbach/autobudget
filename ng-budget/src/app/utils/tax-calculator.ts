@@ -126,10 +126,16 @@ const ADDITIONAL_MEDICARE_RATE = 0.9; // Additional Medicare tax
 const ADDITIONAL_MEDICARE_THRESHOLD_SINGLE = 200000;
 const ADDITIONAL_MEDICARE_THRESHOLD_MARRIED = 250000;
 
-export function calculateTax(annualIncome: number, filingStatus: FilingStatus, deductions: number = 0): TaxCalculationResult {
-  // Calculate taxable income (annual income - standard deduction - additional deductions)
+export function calculateTax(
+  annualIncome: number, 
+  filingStatus: FilingStatus, 
+  deductions: number = 0,
+  taxDeductibleSavings: number = 0, // Annual amount of tax-deductible savings
+  ficaSubjectSavings: number = 0 // Annual amount of tax-deductible savings subject to FICA
+): TaxCalculationResult {
+  // Calculate taxable income (annual income - standard deduction - additional deductions - tax-deductible savings)
   const standardDeduction = getStandardDeduction(filingStatus);
-  const totalDeductions = standardDeduction + deductions;
+  const totalDeductions = standardDeduction + deductions + taxDeductibleSavings;
   const taxableIncome = Math.max(0, annualIncome - totalDeductions);
 
   // Get brackets for filing status
@@ -179,21 +185,32 @@ export function calculateTax(annualIncome: number, filingStatus: FilingStatus, d
   const federalIncomeEffectiveRate = annualIncome > 0 ? (federalTaxAmount / annualIncome) * 100 : 0;
 
   // Calculate FICA taxes (Social Security and Medicare)
+  // FICA is calculated on gross income (before tax-deductible savings)
+  // However, if savings are subject to FICA, they should be included
+  // For most tax-deductible savings (401k, Traditional IRA), FICA still applies
+  // For some (like HSA), FICA may not apply depending on employer setup
+  // We'll calculate FICA on: annualIncome (gross) + ficaSubjectSavings (if they reduce FICA base)
+  // Actually, FICA is typically on gross income. If savings are subject to FICA, they're already in gross income.
+  // If they're NOT subject to FICA, we need to subtract them from FICA calculation.
+  // For simplicity: FICA on (annualIncome - taxDeductibleSavings + ficaSubjectSavings)
+  const ficaBase = annualIncome - taxDeductibleSavings + ficaSubjectSavings;
+  
   // Social Security: 6.2% on income up to wage base limit
-  const socialSecurityTaxableIncome = Math.min(annualIncome, SOCIAL_SECURITY_WAGE_BASE);
+  const socialSecurityTaxableIncome = Math.min(ficaBase, SOCIAL_SECURITY_WAGE_BASE);
   const socialSecurityTax = socialSecurityTaxableIncome * (SOCIAL_SECURITY_RATE / 100);
 
   // Medicare: 1.45% on all income
-  const medicareTax = annualIncome * (MEDICARE_RATE / 100);
+  const medicareTax = ficaBase * (MEDICARE_RATE / 100);
 
-  // Additional Medicare: 0.9% on income above threshold
+  // Additional Medicare: 0.9% on income above threshold (based on FICA base)
   const additionalMedicareThreshold = filingStatus === 'married-jointly' 
     ? ADDITIONAL_MEDICARE_THRESHOLD_MARRIED 
     : ADDITIONAL_MEDICARE_THRESHOLD_SINGLE;
-  const additionalMedicareTaxableIncome = Math.max(0, annualIncome - additionalMedicareThreshold);
+  const additionalMedicareTaxableIncome = Math.max(0, ficaBase - additionalMedicareThreshold);
   const additionalMedicareTax = additionalMedicareTaxableIncome * (ADDITIONAL_MEDICARE_RATE / 100);
 
   const totalFicaTax = socialSecurityTax + medicareTax + additionalMedicareTax;
+  // FICA effective rate should be calculated on gross income (annualIncome), not ficaBase
   const ficaEffectiveRate = annualIncome > 0 ? (totalFicaTax / annualIncome) * 100 : 0;
 
   // Total federal tax (income tax + FICA)

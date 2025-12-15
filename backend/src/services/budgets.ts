@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { budgets, budgetCategories, budgetCategorySubcategories, plaidItems, plaidTransactions, transactionCategories } from '../db/schema';
+import { budgets, budgetCategories, plaidItems, plaidTransactions, transactionCategories } from '../db/schema';
 import { eq, and, gte, lte, sql } from 'drizzle-orm';
 import { syncTransactionsForItem } from './plaid';
 import { storeTransaction, assignTransactionCategory } from './transactions';
@@ -12,8 +12,6 @@ const SYSTEM_CATEGORIES = {
     categoryType: 'surplus',
     allocatedAmount: '0',
     accumulatedTotal: '0',
-    isBufferCategory: true,
-    bufferPriority: 0,
     color: '#28a745'
   },
   EXCLUDED: {
@@ -21,8 +19,6 @@ const SYSTEM_CATEGORIES = {
     categoryType: 'excluded',
     allocatedAmount: '0',
     accumulatedTotal: '0',
-    isBufferCategory: false,
-    bufferPriority: 999,
     color: '#6c757d'
   }
 };
@@ -44,7 +40,6 @@ async function ensureSystemCategories(budgetId: number) {
       budgetId,
       ...SYSTEM_CATEGORIES.SURPLUS,
       spentAmount: '0',
-      estimationMonths: 12,
     });
   }
 
@@ -63,7 +58,6 @@ async function ensureSystemCategories(budgetId: number) {
       budgetId,
       ...SYSTEM_CATEGORIES.EXCLUDED,
       spentAmount: '0',
-      estimationMonths: 12,
     });
   }
 }
@@ -101,21 +95,8 @@ export async function createBudget(
   // Ensure system categories exist
   await ensureSystemCategories(budget.id);
 
-  // Fetch and categorize historical transactions for current month
-  try {
-    // Get all Plaid items for user
-    const items = await db
-      .select()
-      .from(plaidItems)
-      .where(eq(plaidItems.userId, userId));
-
-    for (const item of items) {
-      await syncTransactionsForItem(item.id, userId);
-    }
-  } catch (error: any) {
-    console.error('Error syncing transactions for new budget:', error);
-    // Don't fail budget creation if transaction sync fails
-  }
+  // Note: Transaction syncing is handled separately via the /transactions/sync endpoint
+  // We don't sync transactions here during budget creation to avoid blocking
 
   return budget;
 }
@@ -150,6 +131,9 @@ export async function updateBudget(
     startDate?: string;
     endDate?: string;
     income?: string;
+    taxRate?: string;
+    filingStatus?: string;
+    deductions?: string;
     isActive?: boolean;
   }
 ) {
@@ -189,10 +173,19 @@ export async function createBudgetCategory(
   allocatedAmount: string,
   categoryType?: string,
   accumulatedTotal?: string,
-  estimationMonths?: number,
-  isBufferCategory?: boolean,
-  bufferPriority?: number,
-  color?: string | null
+  color?: string | null,
+  // Variable category fields
+  autoMoveSurplus?: boolean,
+  surplusTargetCategoryId?: number | null,
+  autoMoveDeficit?: boolean,
+  deficitSourceCategoryId?: number | null,
+  // Fixed category fields
+  expectedMerchantName?: string | null,
+  hideFromTransactionLists?: boolean,
+  // Savings category fields
+  isTaxDeductible?: boolean,
+  isSubjectToFica?: boolean,
+  isUnconnectedAccount?: boolean
 ) {
   const budgetId = await getUserBudgetId(userId);
   if (!budgetId) {
@@ -213,10 +206,16 @@ export async function createBudgetCategory(
       spentAmount: '0',
       categoryType: categoryType || 'variable',
       accumulatedTotal: accumulatedTotal || '0',
-      estimationMonths: estimationMonths || 12,
-      isBufferCategory: isBufferCategory || false,
-      bufferPriority: bufferPriority ?? 999,
       color: color || null,
+      autoMoveSurplus: autoMoveSurplus || false,
+      surplusTargetCategoryId: surplusTargetCategoryId || null,
+      autoMoveDeficit: autoMoveDeficit || false,
+      deficitSourceCategoryId: deficitSourceCategoryId || null,
+      expectedMerchantName: expectedMerchantName || null,
+      hideFromTransactionLists: hideFromTransactionLists || false,
+      isTaxDeductible: isTaxDeductible || false,
+      isSubjectToFica: isSubjectToFica || false,
+      isUnconnectedAccount: isUnconnectedAccount || false,
     })
     .returning();
 
@@ -260,7 +259,27 @@ async function calculateCategorySpending(budgetId: number, userId: number): Prom
   return spendingMap;
 }
 
-export async function getBudgetCategories(userId: number) {
+export async function getBudgetCategories(userId: number): Promise<Array<{
+  id: number;
+  budgetId: number;
+  name: string;
+  allocatedAmount: string;
+  spentAmount: string;
+  categoryType: string;
+  accumulatedTotal: string;
+  color: string | null;
+  autoMoveSurplus: boolean;
+  surplusTargetCategoryId: number | null;
+  autoMoveDeficit: boolean;
+  deficitSourceCategoryId: number | null;
+  expectedMerchantName: string | null;
+  hideFromTransactionLists: boolean;
+  isTaxDeductible: boolean;
+  isSubjectToFica: boolean;
+  isUnconnectedAccount: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}> | null> {
   // Get user's budget ID
   const budgetId = await getUserBudgetId(userId);
   if (!budgetId) {
@@ -278,26 +297,27 @@ export async function getBudgetCategories(userId: number) {
   // Calculate current month's spending for each category
   const spendingMap = await calculateCategorySpending(budgetId, userId);
 
-  // Fetch subcategories for each category and update spentAmount
-  const categoriesWithSubcategories = await Promise.all(
-    categories.map(async (category) => {
-      const subcategories = await db
-        .select()
-        .from(budgetCategorySubcategories)
-        .where(eq(budgetCategorySubcategories.categoryId, category.id));
-      
-      // Update spentAmount from calculated spending
-      const spentAmount = spendingMap.get(category.id) || 0;
-      
-      return { 
-        ...category, 
-        subcategories,
-        spentAmount: spentAmount.toFixed(2)
-      };
-    })
-  );
+  // Update spentAmount for each category
+  const categoriesWithSpending = categories.map((category) => {
+    const spentAmount = spendingMap.get(category.id) || 0;
+    const result = { 
+      ...category, 
+      spentAmount: spentAmount.toFixed(2)
+    };
+    // Ensure all fields are present (handle potential null/undefined from database)
+    if (result.isTaxDeductible === null || result.isTaxDeductible === undefined) {
+      result.isTaxDeductible = false;
+    }
+    if (result.isSubjectToFica === null || result.isSubjectToFica === undefined) {
+      result.isSubjectToFica = false;
+    }
+    if (result.isUnconnectedAccount === null || result.isUnconnectedAccount === undefined) {
+      result.isUnconnectedAccount = false;
+    }
+    return result;
+  });
 
-  return categoriesWithSubcategories;
+  return categoriesWithSpending;
 }
 
 export async function getBudgetCategoryById(categoryId: number, userId: number) {
@@ -328,10 +348,19 @@ export async function updateBudgetCategory(
     spentAmount?: string;
     categoryType?: string;
     accumulatedTotal?: string;
-    estimationMonths?: number;
-    isBufferCategory?: boolean;
-    bufferPriority?: number;
     color?: string | null;
+    // Variable category fields
+    autoMoveSurplus?: boolean;
+    surplusTargetCategoryId?: number | null;
+    autoMoveDeficit?: boolean;
+    deficitSourceCategoryId?: number | null;
+    // Fixed category fields
+    expectedMerchantName?: string | null;
+    hideFromTransactionLists?: boolean;
+    // Savings category fields
+    isTaxDeductible?: boolean;
+    isSubjectToFica?: boolean;
+    isUnconnectedAccount?: boolean;
   }
 ) {
   // Get user's budget ID
@@ -356,10 +385,18 @@ export async function updateBudgetCategory(
     throw new Error('Excluded category cannot be modified');
   }
 
+  // Filter out undefined values to avoid issues with Drizzle
+  const cleanUpdates: any = {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined) {
+      cleanUpdates[key] = value;
+    }
+  }
+  
   const [updated] = await db
     .update(budgetCategories)
     .set({
-      ...updates,
+      ...cleanUpdates,
       updatedAt: new Date(),
     })
     .where(and(
@@ -398,165 +435,6 @@ export async function deleteBudgetCategory(categoryId: number, userId: number) {
   return true;
 }
 
-// Subcategory CRUD operations
-export async function createBudgetCategorySubcategory(
-  categoryId: number,
-  userId: number,
-  name: string,
-  expectedAmount: string,
-  useEstimation?: boolean,
-  estimationMonths?: number
-) {
-  // Verify category belongs to user
-  const category = await getBudgetCategoryById(categoryId, userId);
-  if (!category) {
-    return null;
-  }
-
-  // Only allow subcategories for Expected and Savings categories
-  if (category.categoryType !== 'expected' && category.categoryType !== 'savings') {
-    throw new Error('Only Expected and Savings categories can have subcategories');
-  }
-
-  const [subcategory] = await db
-    .insert(budgetCategorySubcategories)
-    .values({
-      categoryId,
-      name,
-      expectedAmount,
-      useEstimation: useEstimation || false,
-      estimationMonths: estimationMonths || 12,
-    })
-    .returning();
-
-  return subcategory;
-}
-
-export async function getBudgetCategorySubcategories(categoryId: number, userId: number) {
-  // Verify category belongs to user
-  const category = await getBudgetCategoryById(categoryId, userId);
-  if (!category) {
-    return null;
-  }
-
-  const subcategories = await db
-    .select()
-    .from(budgetCategorySubcategories)
-    .where(eq(budgetCategorySubcategories.categoryId, categoryId));
-
-  return subcategories;
-}
-
-export async function updateBudgetCategorySubcategory(
-  subcategoryId: number,
-  categoryId: number,
-  userId: number,
-  updates: {
-    name?: string;
-    expectedAmount?: string;
-    actualAmount?: string | null;
-    billDate?: string | null;
-    useEstimation?: boolean;
-    estimationMonths?: number;
-  }
-) {
-  // Verify category belongs to user
-  const category = await getBudgetCategoryById(categoryId, userId);
-  if (!category) {
-    return null;
-  }
-
-  const [updated] = await db
-    .update(budgetCategorySubcategories)
-    .set({
-      ...updates,
-      updatedAt: new Date(),
-    })
-    .where(and(
-      eq(budgetCategorySubcategories.id, subcategoryId),
-      eq(budgetCategorySubcategories.categoryId, categoryId)
-    ))
-    .returning();
-
-  return updated;
-}
-
-export async function deleteBudgetCategorySubcategory(
-  subcategoryId: number,
-  categoryId: number,
-  userId: number
-) {
-  // Verify category belongs to user
-  const category = await getBudgetCategoryById(categoryId, userId);
-  if (!category) {
-    return false;
-  }
-
-  await db
-    .delete(budgetCategorySubcategories)
-    .where(and(
-      eq(budgetCategorySubcategories.id, subcategoryId),
-      eq(budgetCategorySubcategories.categoryId, categoryId)
-    ));
-
-  return true;
-}
-
-// Buffer reduction logic
-export async function reduceBufferCategories(
-  userId: number,
-  overageAmount: number
-) {
-  const budgetId = await getUserBudgetId(userId);
-  if (!budgetId) {
-    return null;
-  }
-
-  // Get all buffer categories for this budget
-  const categories = await db
-    .select()
-    .from(budgetCategories)
-    .where(and(
-      eq(budgetCategories.budgetId, budgetId),
-      eq(budgetCategories.isBufferCategory, true)
-    ));
-
-  // Sort: Surplus first (priority 0), then by bufferPriority
-  categories.sort((a, b) => {
-    if (a.categoryType === 'surplus') return -1;
-    if (b.categoryType === 'surplus') return 1;
-    return (a.bufferPriority ?? 999) - (b.bufferPriority ?? 999);
-  });
-
-  let remainingOverage = overageAmount;
-  const reductions: Array<{ categoryId: number; amount: number }> = [];
-
-  for (const category of categories) {
-    if (remainingOverage <= 0) break;
-
-    const allocatedAmount = parseFloat(category.allocatedAmount);
-    const currentSpent = parseFloat(category.spentAmount);
-    const available = Math.max(0, allocatedAmount - currentSpent);
-
-    if (available > 0) {
-      const reduction = Math.min(available, remainingOverage);
-      const newAllocated = (allocatedAmount - reduction).toFixed(2);
-
-      await db
-        .update(budgetCategories)
-        .set({
-          allocatedAmount: newAllocated,
-          updatedAt: new Date(),
-        })
-        .where(eq(budgetCategories.id, category.id));
-
-      reductions.push({ categoryId: category.id, amount: reduction });
-      remainingOverage -= reduction;
-    }
-  }
-
-  return { reductions, remainingOverage };
-}
 
 export async function getBudgetById(budgetId: number, userId: number) {
   const [budget] = await db

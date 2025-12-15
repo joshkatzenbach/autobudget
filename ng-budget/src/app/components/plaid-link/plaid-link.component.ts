@@ -30,7 +30,7 @@ declare global {
     .plaid-link-container {
       display: flex;
       flex-direction: column;
-      align-items: center;
+      align-items: flex-start;
       gap: 10px;
     }
     .loading, .error {

@@ -7,4 +7,46 @@
       <canvas #variableSpendingChart></canvas>
     </div>
   </div>
+
+  <div class="chart-section">
+    <h3>Savings Categories</h3>
+    <div class="chart-wrapper">
+      <canvas #savingsChart></canvas>
+    </div>
+    <p class="chart-help-text">Click on a bar to see month-to-month changes</p>
+  </div>
+
+  @if (selectedSavingsCategory) {
+    <div class="chart-section">
+      <h3>{{ selectedSavingsCategory.name }} - Month to Month</h3>
+      <div class="chart-wrapper">
+        <canvas #savingsLineChart></canvas>
+      </div>
+      <button class="btn-secondary" (click)="selectedSavingsCategory = null; savingsSnapshots = []">Back to All Savings</button>
+    </div>
+  }
+
+  <div class="chart-section">
+    <h3>Fixed Category Savings</h3>
+    @if (getFixedCategories().length === 0) {
+      <p class="no-data">No Fixed categories</p>
+    } @else {
+      <div class="fixed-savings-list">
+        @for (category of getFixedCategories(); track category.id) {
+          <div class="fixed-savings-item">
+            <div class="category-info">
+              <span class="color-indicator" [style.background-color]="category.color || '#667eea'"></span>
+              <span class="category-name">{{ category.name }}</span>
+            </div>
+            <div class="savings-amount" [class.positive]="getFixedCategorySavings(category) >= 0" [class.negative]="getFixedCategorySavings(category) < 0">
+              {{ formatCurrency(getFixedCategorySavings(category)) }}
+            </div>
+            <div class="expected-amount">
+              Expected: {{ formatCurrency(getFixedCategoryExpected(category)) }}
+            </div>
+          </div>
+        }
+      </div>
+    }
+  </div>
 </div>

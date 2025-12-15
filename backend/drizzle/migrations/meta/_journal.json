@@ -127,6 +127,27 @@
       "when": 1734200000000,
       "tag": "0017_add_transaction_reviewed",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1734300000000,
+      "tag": "0018_remove_unused_features",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1734400000000,
+      "tag": "0019_category_mechanics_overhaul",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1734500000000,
+      "tag": "0020_add_savings_tax_fields",
+      "breakpoints": true
     }
   ]
 }

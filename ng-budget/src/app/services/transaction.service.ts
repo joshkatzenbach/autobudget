@@ -3,7 +3,6 @@ import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
 import {
   TransactionWithCategories,
-  TransactionCategoryOverride,
   MonthlyCategorySummary
 } from '../models/budget.model';
 
@@ -13,27 +12,24 @@ import {
 export class TransactionService {
   constructor(private api: ApiService) {}
 
-  getTransactions(limit?: number, offset?: number, reviewed?: boolean | null): Observable<TransactionWithCategories[]> {
+  getTransactions(limit?: number, offset?: number, reviewed?: boolean | null, includeHiddenFixed?: boolean): Observable<TransactionWithCategories[]> {
     const params: any = {};
     if (limit !== undefined) params.limit = limit;
     if (offset !== undefined) params.offset = offset;
     if (reviewed !== null && reviewed !== undefined) params.reviewed = reviewed.toString();
+    if (includeHiddenFixed !== undefined) params.includeHiddenFixed = includeHiddenFixed.toString();
     const queryString = new URLSearchParams(params).toString();
     return this.api.get<TransactionWithCategories[]>(`/transactions${queryString ? '?' + queryString : ''}`);
   }
 
-  assignTransactionCategory(transactionId: number, categoryId: number, amount: number, subcategoryId?: number | null): Observable<any> {
-    const body: any = {
+  assignTransactionCategory(transactionId: number, categoryId: number, amount: number): Observable<any> {
+    return this.api.post(`/transactions/${transactionId}/category`, {
       categoryId,
       amount
-    };
-    if (subcategoryId !== undefined && subcategoryId !== null) {
-      body.subcategoryId = subcategoryId;
-    }
-    return this.api.post(`/transactions/${transactionId}/category`, body);
+    });
   }
 
-  splitTransaction(transactionId: number, splits: Array<{categoryId: number, subcategoryId?: number | null, amount: number}>): Observable<any> {
+  splitTransaction(transactionId: number, splits: Array<{categoryId: number, amount: number}>): Observable<any> {
     return this.api.post(`/transactions/${transactionId}/split`, {
       splits
     });
@@ -41,10 +37,6 @@ export class TransactionService {
 
   removeTransactionCategory(transactionId: number, categoryId: number): Observable<void> {
     return this.api.delete<void>(`/transactions/${transactionId}/categories/${categoryId}`);
-  }
-
-  getCategoryOverrides(): Observable<TransactionCategoryOverride[]> {
-    return this.api.get<TransactionCategoryOverride[]>('/transactions/overrides');
   }
 
   generateMonthlySummary(year: number, month: number, budgetId?: number): Observable<any> {

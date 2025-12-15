@@ -179,8 +179,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                   storedTx.id,
                   categorizationResult.categoryId,
                   tx.amount.toString(),
-                  false, // LLM-assigned
-                  categorizationResult.subcategoryId
+                  false // LLM-assigned
                 );
 
                 // Send Slack notification
@@ -188,8 +187,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                   await sendTransactionNotification(
                     plaidItem.userId,
                     storedTx.id,
-                    categorizationResult.categoryId,
-                    categorizationResult.subcategoryId
+                    categorizationResult.categoryId
                   );
                 } catch (slackError: any) {
                   console.error(`Error sending Slack notification for transaction ${storedTx.id}:`, slackError);
@@ -619,7 +617,6 @@ router.post('/test/generate-transaction', async (req: AuthRequest, res: Response
 
     // Categorize transaction
     let categoryId: number | null = null;
-    let subcategoryId: number | null = null;
 
     try {
       const categorizationResult = await categorizeTransaction({
@@ -632,14 +629,12 @@ router.post('/test/generate-transaction', async (req: AuthRequest, res: Response
 
       if (categorizationResult.categoryId) {
         categoryId = categorizationResult.categoryId;
-        subcategoryId = categorizationResult.subcategoryId;
 
         await assignTransactionCategory(
           storedTx.id,
           categorizationResult.categoryId,
           testAmount,
-          false, // LLM-assigned
-          categorizationResult.subcategoryId
+          false // LLM-assigned
         );
 
         // Send Slack notification
@@ -647,8 +642,7 @@ router.post('/test/generate-transaction', async (req: AuthRequest, res: Response
           await sendTransactionNotification(
             req.userId,
             storedTx.id,
-            categorizationResult.categoryId,
-            categorizationResult.subcategoryId
+            categorizationResult.categoryId
           );
         } catch (slackError: any) {
           console.error(`Error sending Slack notification for test transaction ${storedTx.id}:`, slackError);
@@ -668,8 +662,7 @@ router.post('/test/generate-transaction', async (req: AuthRequest, res: Response
         merchant: testMerchant,
         amount: testAmount,
         date: today,
-        categoryId,
-        subcategoryId
+        categoryId
       }
     });
   } catch (error: any) {

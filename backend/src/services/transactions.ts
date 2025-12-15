@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { plaidTransactions, transactionCategories, transactionCategoryOverrides, monthlyCategorySummaries, budgetCategories, budgets, plaidAccounts, budgetCategorySubcategories } from '../db/schema';
+import { plaidTransactions, transactionCategories, monthlyCategorySummaries, budgetCategories, budgets, plaidAccounts } from '../db/schema';
 import { eq, and, desc, gte, lte, sql, inArray, isNull } from 'drizzle-orm';
 
 export interface TransactionWithCategories {
@@ -16,14 +16,13 @@ export interface TransactionWithCategories {
   plaidCategoryId: string | null;
   isPending: boolean;
   isReviewed: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string | Date;
+  updatedAt: string | Date;
   accountName?: string | null;
   accountMask?: string | null;
   categories: Array<{
     id: number;
     categoryId: number;
-    subcategoryId?: number | null;
     amount: string;
     isManual: boolean;
     categoryName?: string;
@@ -78,8 +77,7 @@ export async function assignTransactionCategory(
   transactionId: number,
   categoryId: number,
   amount: string,
-  isManual: boolean = false,
-  subcategoryId: number | null = null
+  isManual: boolean = false
 ) {
   // Delete existing categories for this transaction
   await db
@@ -92,7 +90,6 @@ export async function assignTransactionCategory(
     .values({
       transactionId,
       categoryId,
-      subcategoryId: subcategoryId || null,
       amount,
       isManual,
     })
@@ -111,7 +108,7 @@ export async function assignTransactionCategory(
 
 export async function updateTransactionCategories(
   transactionId: number,
-  splits: Array<{ categoryId: number; amount: string; subcategoryId?: number | null }>,
+  splits: Array<{ categoryId: number; amount: string }>,
   isManual: boolean = true
 ) {
   // Validate sum equals transaction amount
@@ -146,7 +143,6 @@ export async function updateTransactionCategories(
       splits.map((split) => ({
         transactionId,
         categoryId: split.categoryId,
-        subcategoryId: split.subcategoryId || null,
         amount: split.amount,
         isManual,
       }))
@@ -178,7 +174,8 @@ export async function getTransactionsForUser(
   userId: number,
   limit?: number,
   offset?: number,
-  reviewed?: boolean | null // null = all, true = reviewed only, false = unreviewed only
+  reviewed?: boolean | null, // null = all, true = reviewed only, false = unreviewed only
+  includeHiddenFixed?: boolean // true = include Fixed categories with hideFromTransactionLists, false = hide them (default: false)
 ): Promise<TransactionWithCategories[]> {
   // Build where conditions
   let whereCondition;
@@ -209,30 +206,35 @@ export async function getTransactionsForUser(
   const budgetId = await getUserBudgetId(userId);
 
   // Get categories for each transaction
-  const transactionsWithCategories: TransactionWithCategories[] = await Promise.all(
+  const transactionsWithCategories = await Promise.all(
     transactions.map(async (transaction) => {
       const categories = await db
         .select({
           id: transactionCategories.id,
           categoryId: transactionCategories.categoryId,
-          subcategoryId: transactionCategories.subcategoryId,
           amount: transactionCategories.amount,
           isManual: transactionCategories.isManual,
         })
         .from(transactionCategories)
         .where(eq(transactionCategories.transactionId, transaction.id));
 
-      // Get category names (only if budget exists)
+      // Get category names and check if any are hidden Fixed categories
       const categoriesWithNames = await Promise.all(
         categories.map(async (cat) => {
           if (!budgetId) {
             return {
               ...cat,
               categoryName: undefined,
+              categoryType: undefined,
+              hideFromTransactionLists: false,
             };
           }
           const [category] = await db
-            .select({ name: budgetCategories.name })
+            .select({ 
+              name: budgetCategories.name,
+              categoryType: budgetCategories.categoryType,
+              hideFromTransactionLists: budgetCategories.hideFromTransactionLists,
+            })
             .from(budgetCategories)
             .where(and(
               eq(budgetCategories.id, cat.categoryId),
@@ -243,9 +245,21 @@ export async function getTransactionsForUser(
           return {
             ...cat,
             categoryName: category?.name,
+            categoryType: category?.categoryType,
+            hideFromTransactionLists: category?.hideFromTransactionLists || false,
           };
         })
       );
+
+      // Filter out transactions that are assigned to hidden Fixed categories (unless includeHiddenFixed is true)
+      if (!includeHiddenFixed) {
+        const hasHiddenFixedCategory = categoriesWithNames.some(cat => 
+          cat.categoryType === 'fixed' && cat.hideFromTransactionLists
+        );
+        if (hasHiddenFixedCategory) {
+          return null; // Filter out this transaction
+        }
+      }
 
       // Get account information (use custom name if available)
       const [account] = await db
@@ -262,9 +276,10 @@ export async function getTransactionsForUser(
         .limit(1);
 
       // Convert date to string if it's a Date object
-      const dateStr = transaction.date instanceof Date 
-        ? transaction.date.toISOString().split('T')[0]
-        : String(transaction.date);
+      const dateValue = transaction.date as unknown;
+      const dateStr = dateValue instanceof Date 
+        ? (dateValue as Date).toISOString().split('T')[0]
+        : String(dateValue);
 
       // Use customName if it exists and is not empty, otherwise use original name
       const displayName = account?.customName && account.customName.trim() !== '' 
@@ -274,37 +289,31 @@ export async function getTransactionsForUser(
       return {
         ...transaction,
         date: dateStr,
-        createdAt: transaction.createdAt instanceof Date 
-          ? transaction.createdAt.toISOString()
+        createdAt: (transaction.createdAt as any) instanceof Date 
+          ? (transaction.createdAt as Date).toISOString()
           : String(transaction.createdAt),
-        updatedAt: transaction.updatedAt instanceof Date
-          ? transaction.updatedAt.toISOString()
+        updatedAt: (transaction.updatedAt as any) instanceof Date
+          ? (transaction.updatedAt as Date).toISOString()
           : String(transaction.updatedAt),
         accountName: displayName,
         accountMask: account?.mask || null,
-        categories: categoriesWithNames,
+        categories: categoriesWithNames.map(({ categoryType, hideFromTransactionLists, ...cat }) => cat), // Remove internal fields
       };
     })
   );
 
-  return transactionsWithCategories;
+  // Filter out null transactions (hidden Fixed categories)
+  return transactionsWithCategories.filter((tx) => tx !== null) as TransactionWithCategories[];
 }
 
 export async function splitTransaction(
   transactionId: number,
-  splits: Array<{ categoryId: number; amount: string; subcategoryId?: number | null }>
+  splits: Array<{ categoryId: number; amount: string }>
 ) {
   return updateTransactionCategories(transactionId, splits, true);
 }
 
-export async function getUserCategoryOverrides(userId: number) {
-  return db
-    .select()
-    .from(transactionCategoryOverrides)
-    .where(eq(transactionCategoryOverrides.userId, userId));
-}
-
-export async function getMerchantHistory(userId: number, merchantName: string | null, limit: number = 3) {
+export async function getMerchantHistory(userId: number, merchantName: string | null, limit: number = 5) {
   if (!merchantName) {
     return [];
   }
@@ -326,12 +335,11 @@ export async function getMerchantHistory(userId: number, merchantName: string | 
         .select({
           categoryId: transactionCategories.categoryId,
           amount: transactionCategories.amount,
-          subcategoryId: transactionCategories.subcategoryId,
         })
         .from(transactionCategories)
         .where(eq(transactionCategories.transactionId, transaction.id));
 
-      // Get category names and subcategories
+      // Get category names
       const categoriesWithNames = await Promise.all(
         categories.map(async (cat) => {
           const [category] = await db
@@ -340,23 +348,10 @@ export async function getMerchantHistory(userId: number, merchantName: string | 
             .where(eq(budgetCategories.id, cat.categoryId))
             .limit(1);
 
-          // Get subcategory if it exists
-          let subcategoryName: string | null = null;
-          if (cat.subcategoryId) {
-            const [subcategory] = await db
-              .select({ name: budgetCategorySubcategories.name })
-              .from(budgetCategorySubcategories)
-              .where(eq(budgetCategorySubcategories.id, cat.subcategoryId))
-              .limit(1);
-            subcategoryName = subcategory?.name || null;
-          }
-
           return {
             categoryId: cat.categoryId,
             amount: cat.amount,
             categoryName: category?.name || 'Unknown',
-            subcategoryId: cat.subcategoryId || null,
-            subcategoryName: subcategoryName,
           };
         })
       );

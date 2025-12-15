@@ -3,7 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, ActivatedRoute } from '@angular/router';
 import { BudgetService } from '../../services/budget.service';
-import { CreateBudgetRequest, CreateBudgetCategoryRequest, UpdateBudgetCategoryRequest, FilingStatus, CategoryType, BudgetCategorySubcategory, Budget, BudgetCategory } from '../../models/budget.model';
+import { TransactionService } from '../../services/transaction.service';
+import { CreateBudgetRequest, CreateBudgetCategoryRequest, UpdateBudgetCategoryRequest, FilingStatus, CategoryType, Budget, BudgetCategory } from '../../models/budget.model';
 import { calculateTax, getStandardDeduction, FilingStatus as TaxFilingStatus } from '../../utils/tax-calculator';
 
 interface CategoryForm {
@@ -13,24 +14,19 @@ interface CategoryForm {
   allocatedAmountPeriod: 'monthly' | 'annual'; // Whether allocatedAmount is monthly or annual
   categoryType: CategoryType;
   accumulatedTotal: string;
-  estimationMonths: number;
-  useEstimation: boolean; // Whether to use estimation feature
-  isBufferCategory: boolean;
-  bufferPriority: number;
   color: string | null;
-  useSubcategories: boolean; // For Expected categories - whether to use subcategories
-  subcategories: SubcategoryForm[];
-}
-
-interface SubcategoryForm {
-  id?: number;
-  name: string;
-  expectedAmount: string;
-  expectedAmountPeriod: 'monthly' | 'annual'; // Whether expectedAmount is monthly or annual
-  actualAmount: string | null;
-  billDate: string | null;
-  useEstimation: boolean; // Whether to use estimation feature for this subcategory
-  estimationMonths: number; // Number of months to use for estimation
+  // Variable category fields
+  autoMoveSurplus?: boolean;
+  surplusTargetCategoryId?: number | null;
+  autoMoveDeficit?: boolean;
+  deficitSourceCategoryId?: number | null;
+  // Fixed category fields
+  expectedMerchantName?: string | null;
+  hideFromTransactionLists?: boolean;
+  // Savings category fields
+  isTaxDeductible?: boolean;
+  isSubjectToFica?: boolean;
+  isUnconnectedAccount?: boolean;
 }
 
 @Component({
@@ -63,10 +59,13 @@ export class BudgetFormComponent implements OnInit {
   categories = signal<CategoryForm[]>([]);
   expandedCategoryIndex = signal<number | null>(null);
   taxBreakdownView = signal<'annual' | 'monthly'>('annual');
+  merchantSuggestions = signal<Record<number, string[]>>({});
+  merchantSuggestionsVisible = signal<Record<number, boolean>>({});
   
 
   constructor(
     private budgetService: BudgetService,
+    private transactionService: TransactionService,
     private router: Router,
     private route: ActivatedRoute
   ) {
@@ -143,33 +142,20 @@ export class BudgetFormComponent implements OnInit {
             allocatedAmountPeriod: 'monthly' as 'monthly' | 'annual', // Default to monthly, could be enhanced to detect
             categoryType: cat.categoryType,
             accumulatedTotal: cat.accumulatedTotal || '0',
-            estimationMonths: cat.estimationMonths || 12,
-            useEstimation: false, // Default, could be enhanced
-            isBufferCategory: cat.isBufferCategory || false,
-            bufferPriority: cat.bufferPriority || 999,
             color: cat.color || this.getNextAvailableColor(),
-            useSubcategories: false,
-            subcategories: []
+            // Variable category fields
+            autoMoveSurplus: cat.autoMoveSurplus || false,
+            surplusTargetCategoryId: cat.surplusTargetCategoryId || null,
+            autoMoveDeficit: cat.autoMoveDeficit || false,
+            deficitSourceCategoryId: cat.deficitSourceCategoryId || null,
+            // Fixed category fields
+            expectedMerchantName: cat.expectedMerchantName || null,
+            hideFromTransactionLists: cat.hideFromTransactionLists || false,
+            // Savings category fields
+            isTaxDeductible: cat.isTaxDeductible ?? false,
+            isSubjectToFica: cat.isSubjectToFica ?? false,
+            isUnconnectedAccount: cat.isUnconnectedAccount ?? false,
           };
-
-          // Load subcategories if they exist (for expected or savings categories)
-          if ((cat.categoryType === 'expected' || cat.categoryType === 'savings') && cat.subcategories && cat.subcategories.length > 0) {
-            form.useSubcategories = true;
-            form.subcategories = cat.subcategories.map(subcat => ({
-              id: subcat.id,
-              name: subcat.name,
-              expectedAmount: subcat.expectedAmount,
-              expectedAmountPeriod: 'monthly' as 'monthly' | 'annual', // Default to monthly
-              actualAmount: subcat.actualAmount || null,
-              billDate: subcat.billDate || null,
-              useEstimation: subcat.useEstimation || false,
-              estimationMonths: subcat.estimationMonths || 12
-            }));
-            // Recalculate allocated amount from subcategories after categories are set
-            setTimeout(() => {
-              this.updateAllocatedFromSubcategories(index);
-            }, 0);
-          }
 
             return form;
           });
@@ -211,7 +197,25 @@ export class BudgetFormComponent implements OnInit {
       };
     }
     
-    const result = calculateTax(annualIncome, filingStatus as TaxFilingStatus, deductions);
+    // Calculate total tax-deductible savings (annual amount)
+    const taxDeductibleSavings = this.categories()
+      .filter(cat => cat.categoryType === 'savings' && cat.isTaxDeductible)
+      .reduce((sum, cat) => {
+        const amount = parseFloat(cat.allocatedAmount || '0');
+        const annualAmount = cat.allocatedAmountPeriod === 'annual' ? amount : amount * 12;
+        return sum + annualAmount;
+      }, 0);
+
+    // Calculate FICA-subject savings (tax-deductible savings that are subject to FICA)
+    const ficaSubjectSavings = this.categories()
+      .filter(cat => cat.categoryType === 'savings' && cat.isTaxDeductible && cat.isSubjectToFica)
+      .reduce((sum, cat) => {
+        const amount = parseFloat(cat.allocatedAmount || '0');
+        const annualAmount = cat.allocatedAmountPeriod === 'annual' ? amount : amount * 12;
+        return sum + annualAmount;
+      }, 0);
+
+    const result = calculateTax(annualIncome, filingStatus as TaxFilingStatus, deductions, taxDeductibleSavings, ficaSubjectSavings);
     return { ...result, standardDeduction: getStandardDeduction(filingStatus as TaxFilingStatus) };
   });
 
@@ -224,7 +228,7 @@ export class BudgetFormComponent implements OnInit {
   getStandardDeduction = computed(() => this.taxCalculation().standardDeduction);
   getTotalDeductions = computed(() => this.getStandardDeduction() + (parseFloat(this.budgetForm.deductions()) || 0));
   getNetIncome = computed(() => (parseFloat(this.budgetForm.income()) || 0) - this.getTaxAmount());
-  getRemainingIncome = computed(() => this.getNetIncome() - this.getTotalAllocated());
+  getRemainingIncome = computed(() => this.getNetIncome() - this.getTotalSavings() - this.getTotalAllocated());
   getAnnualIncome = computed(() => {
     const income = parseFloat(this.budgetForm.income()) || 0;
     return this.budgetForm.incomePeriod() === 'annual' ? income : income * 12;
@@ -235,25 +239,99 @@ export class BudgetFormComponent implements OnInit {
   getAnnualRemaining = computed(() => this.getRemainingIncome() * 12);
 
   getTotalAllocated(): number {
-    // Exclude Surplus and Excluded categories from total allocated
-    // (Surplus is calculated automatically, Excluded doesn't count toward budget)
+    // Exclude Surplus, Excluded, and Savings categories from total allocated
+    // (Surplus is calculated automatically, Excluded doesn't count toward budget, Savings is deducted separately)
     return this.categories()
-      .filter(cat => cat.categoryType !== 'surplus' && cat.categoryType !== 'excluded')
+      .filter(cat => cat.categoryType !== 'surplus' && cat.categoryType !== 'excluded' && cat.categoryType !== 'savings')
       .reduce((sum, cat) => {
-        if ((cat.categoryType === 'expected' || cat.categoryType === 'savings') && cat.useSubcategories) {
-          // Sum up subcategory amounts (convert to monthly if needed)
-          const subcatTotal = cat.subcategories.reduce((subSum, subcat) => {
-            const amount = parseFloat(subcat.expectedAmount) || 0;
-            const monthlyAmount = subcat.expectedAmountPeriod === 'annual' ? amount / 12 : amount;
-            return subSum + monthlyAmount;
-          }, 0);
-          return sum + subcatTotal;
-        } else {
-          const amount = parseFloat(cat.allocatedAmount) || 0;
-          const monthlyAmount = cat.allocatedAmountPeriod === 'annual' ? amount / 12 : amount;
-          return sum + monthlyAmount;
-        }
+        const amount = parseFloat(cat.allocatedAmount) || 0;
+        const monthlyAmount = cat.allocatedAmountPeriod === 'annual' ? amount / 12 : amount;
+        return sum + monthlyAmount;
       }, 0);
+  }
+
+  getTotalSavings(): number {
+    // Calculate total allocated to Savings categories
+    return this.categories()
+      .filter(cat => cat.categoryType === 'savings')
+      .reduce((sum, cat) => {
+        const amount = parseFloat(cat.allocatedAmount) || 0;
+        const monthlyAmount = cat.allocatedAmountPeriod === 'annual' ? amount / 12 : amount;
+        return sum + monthlyAmount;
+      }, 0);
+  }
+
+  getSavingsCategories(): BudgetCategory[] {
+    return this.categories()
+      .filter(cat => cat.categoryType === 'savings' && cat.id)
+      .map(cat => ({
+        id: cat.id!,
+        budgetId: this.budgetId!,
+        name: cat.name,
+        allocatedAmount: cat.allocatedAmount,
+        spentAmount: '0',
+        categoryType: 'savings' as CategoryType,
+        accumulatedTotal: cat.accumulatedTotal,
+        color: cat.color,
+        createdAt: '',
+        updatedAt: '',
+      }));
+  }
+
+  async showMerchantSuggestions(categoryIndex: number) {
+    const category = this.categories()[categoryIndex];
+    if (!category || category.categoryType !== 'fixed') return;
+
+    const currentValue = category.expectedMerchantName || '';
+    if (currentValue.length < 2) {
+      this.merchantSuggestionsVisible.set({ ...this.merchantSuggestionsVisible(), [categoryIndex]: false });
+      return;
+    }
+
+    // Get unique merchant names from transactions (would need to fetch from API)
+    // For now, we'll implement a simple search
+    try {
+      // This would need an API endpoint to search merchants
+      // For now, we'll just show/hide based on input
+      this.merchantSuggestionsVisible.set({ ...this.merchantSuggestionsVisible(), [categoryIndex]: true });
+    } catch (error) {
+      console.error('Error fetching merchant suggestions:', error);
+    }
+  }
+
+  hideMerchantSuggestions(categoryIndex: number) {
+    // Delay hiding to allow click events to fire
+    setTimeout(() => {
+      this.merchantSuggestionsVisible.set({ ...this.merchantSuggestionsVisible(), [categoryIndex]: false });
+    }, 200);
+  }
+
+  selectMerchant(categoryIndex: number, merchant: string) {
+    const category = this.categories()[categoryIndex];
+    if (category) {
+      category.expectedMerchantName = merchant;
+      this.categories.set([...this.categories()]);
+    }
+    this.hideMerchantSuggestions(categoryIndex);
+  }
+
+  async openMerchantSearch(categoryIndex: number) {
+    // Fetch unique merchant names from transactions
+    try {
+      const transactions = await this.transactionService.getTransactions(100, 0, null).toPromise();
+      if (transactions) {
+        const uniqueMerchants = Array.from(new Set(
+          transactions
+            .map(t => t.merchantName || t.name)
+            .filter(name => name && name.trim().length > 0)
+        )).sort();
+
+        this.merchantSuggestions.set({ ...this.merchantSuggestions(), [categoryIndex]: uniqueMerchants });
+        this.merchantSuggestionsVisible.set({ ...this.merchantSuggestionsVisible(), [categoryIndex]: true });
+      }
+    } catch (error) {
+      console.error('Error fetching merchants:', error);
+    }
   }
 
   getSurplusCategory() {
@@ -271,9 +349,9 @@ export class BudgetFormComponent implements OnInit {
     }
   }
 
-  // Total spending includes taxes + categories
+  // Total spending includes taxes + savings + categories
   getTotalSpending = computed(() => {
-    return this.getTaxAmount() + this.getTotalAllocated();
+    return this.getTaxAmount() + this.getTotalSavings() + this.getTotalAllocated();
   });
 
   getAnnualTotalSpending = computed(() => {
@@ -335,13 +413,16 @@ export class BudgetFormComponent implements OnInit {
         allocatedAmountPeriod: 'monthly',
         categoryType: 'variable',
         accumulatedTotal: '0',
-        estimationMonths: 12,
-        useEstimation: false,
-        isBufferCategory: false,
-        bufferPriority: 999,
         color: this.getNextAvailableColor(),
-        useSubcategories: false,
-        subcategories: []
+        autoMoveSurplus: false,
+        surplusTargetCategoryId: null,
+        autoMoveDeficit: false,
+        deficitSourceCategoryId: null,
+        expectedMerchantName: null,
+        hideFromTransactionLists: false,
+        isTaxDeductible: false,
+        isSubjectToFica: false,
+        isUnconnectedAccount: false,
       }
     ]);
   }
@@ -359,13 +440,7 @@ export class BudgetFormComponent implements OnInit {
           allocatedAmountPeriod: 'monthly',
           categoryType: 'surplus',
           accumulatedTotal: '0',
-          estimationMonths: 12,
-          useEstimation: false,
-          isBufferCategory: true,
-          bufferPriority: 0,
-          color: '#28a745',
-          useSubcategories: false,
-          subcategories: []
+          color: '#28a745'
         }
       ]);
     }
@@ -400,83 +475,11 @@ export class BudgetFormComponent implements OnInit {
         return;
       }
 
-      // For Expected/Savings categories with subcategories, validate subcategories
-      if ((category.categoryType === 'expected' || category.categoryType === 'savings') && category.useSubcategories) {
-        if (!category.subcategories || category.subcategories.length === 0) {
-          this.categoryError.set({ index, message: 'Please add at least one subcategory or disable subcategories' });
-          return;
-        }
-        
-        // Validate each subcategory
-        let validSubcatCount = 0;
-        
-        for (let i = 0; i < category.subcategories.length; i++) {
-          const subcat = category.subcategories[i];
-          
-          // Get name and amount - expectedAmount is a string
-          const name = subcat.name ? String(subcat.name).trim() : '';
-          const amountStr = subcat.expectedAmount ? String(subcat.expectedAmount).trim() : '';
-          
-          // Skip completely empty subcategories (no name and no amount)
-          if (!name && !amountStr) {
-            continue;
-          }
-          
-          // If we have any data, both name and amount are required
-          if (!name || name.length === 0) {
-            this.categoryError.set({ index, message: `Subcategory #${i + 1} must have a name` });
-            return;
-          }
-          
-          // Check if amount is provided (allow 0 and empty string that represents 0)
-          if (!amountStr || amountStr.length === 0) {
-            this.categoryError.set({ index, message: `Subcategory "${name}" must have an expected amount` });
-            return;
-          }
-          
-          const amount = parseFloat(amountStr);
-          if (isNaN(amount)) {
-            this.categoryError.set({ index, message: `Subcategory "${name}" must have a valid numeric amount` });
-            return;
-          }
-          
-          // Allow 0 as a valid amount
-          if (amount < 0) {
-            this.categoryError.set({ index, message: `Subcategory "${name}" must have an expected amount that is 0 or greater` });
-            return;
-          }
-          
-          // This subcategory is valid
-          validSubcatCount++;
-        }
-        
-        if (validSubcatCount === 0) {
-          this.categoryError.set({ index, message: 'Please add at least one subcategory with a name and expected amount' });
-          return;
-        }
-        
-        // Ensure allocatedAmount matches sum of subcategories
-        // This will update the allocatedAmount based on subcategory totals
-        const updatedCategory = this.updateAllocatedFromSubcategories(index);
-        
-        // Verify the allocated amount is valid after calculation (allow 0)
-        if (updatedCategory) {
-          const totalAmount = parseFloat(updatedCategory.allocatedAmount || '0');
-          if (isNaN(totalAmount) || totalAmount < 0) {
-            this.categoryError.set({ index, message: 'The total amount from all subcategories must be 0 or greater. Please check your subcategory amounts.' });
-            return;
-          }
-        } else {
-          this.categoryError.set({ index, message: 'Failed to calculate total from subcategories' });
-          return;
-        }
-      } else {
-        // For categories without subcategories, validate allocatedAmount (allow 0)
-        const amount = parseFloat(category.allocatedAmount || '0');
-        if (isNaN(amount) || amount < 0) {
-          this.categoryError.set({ index, message: 'Category must have a valid allocated amount (0 or greater)' });
-          return;
-        }
+      // Validate allocatedAmount (allow 0)
+      const amount = parseFloat(category.allocatedAmount || '0');
+      if (isNaN(amount) || amount < 0) {
+        this.categoryError.set({ index, message: 'Category must have a valid allocated amount (0 or greater)' });
+        return;
       }
 
       // Update the categories signal to trigger reactivity and update all summary fields
@@ -514,102 +517,7 @@ export class BudgetFormComponent implements OnInit {
     }
   }
 
-  toggleSubcategories(categoryIndex: number) {
-    const categories = this.categories();
-    const category = categories[categoryIndex];
-    category.useSubcategories = !category.useSubcategories;
-    
-    if (category.useSubcategories) {
-      // When enabling subcategories, clear allocatedAmount (it will be calculated from subcategories)
-      category.allocatedAmount = '';
-      // Initialize with one empty subcategory if none exist
-      if (category.subcategories.length === 0) {
-        category.subcategories.push({
-          name: '',
-          expectedAmount: '',
-          expectedAmountPeriod: 'monthly',
-          actualAmount: null,
-          billDate: null,
-          useEstimation: false,
-          estimationMonths: 12
-        });
-      }
-    } else {
-      // When disabling subcategories, calculate total from existing subcategories
-      const total = category.subcategories.reduce((sum, subcat) => {
-        return sum + (parseFloat(subcat.expectedAmount) || 0);
-      }, 0);
-      category.allocatedAmount = total.toFixed(2);
-      category.subcategories = [];
-    }
-    
-    this.categories.set([...categories]);
-  }
 
-  addSubcategory(categoryIndex: number) {
-    const categories = this.categories();
-    const category = categories[categoryIndex];
-    category.subcategories.push({
-      name: '',
-      expectedAmount: '',
-      expectedAmountPeriod: 'monthly',
-      actualAmount: null,
-      billDate: null,
-      useEstimation: false,
-      estimationMonths: 12
-    });
-    this.categories.set([...categories]);
-    this.updateAllocatedFromSubcategories(categoryIndex);
-  }
-
-  removeSubcategory(categoryIndex: number, subcategoryIndex: number) {
-    const categories = this.categories();
-    const category = categories[categoryIndex];
-    
-    // Create a new subcategories array without the removed item
-    const updatedSubcategories = category.subcategories.filter((_, i) => i !== subcategoryIndex);
-    category.subcategories = updatedSubcategories;
-    
-    // Create a new categories array to trigger reactivity
-    this.categories.set([...categories]);
-    this.updateAllocatedFromSubcategories(categoryIndex);
-  }
-
-  updateAllocatedFromSubcategories(categoryIndex: number) {
-    const categories = this.categories();
-    const category = categories[categoryIndex];
-    if (category && category.useSubcategories && (category.categoryType === 'expected' || category.categoryType === 'savings')) {
-      // Calculate total from current subcategory values (convert to monthly if needed)
-      // Read directly from the subcategories to get the latest values
-      const total = category.subcategories.reduce((sum, subcat) => {
-        const amount = parseFloat(subcat.expectedAmount || '0') || 0;
-        const monthlyAmount = subcat.expectedAmountPeriod === 'annual' ? amount / 12 : amount;
-        return sum + monthlyAmount;
-      }, 0);
-      
-      // Create a new category object with updated allocatedAmount
-      // Also create a new subcategories array reference to ensure reactivity
-      const updatedCategory = { 
-        ...category, 
-        allocatedAmount: total > 0 ? total.toFixed(2) : '0.00',
-        subcategories: category.subcategories.map(subcat => ({ ...subcat })) // Deep copy for reactivity
-      };
-      
-      // Create a new categories array with the updated category
-      const updatedCategories = categories.map((cat, idx) => 
-        idx === categoryIndex ? updatedCategory : cat
-      );
-      
-      this.categories.set(updatedCategories);
-      
-      // Update Surplus category to reflect the new remaining budget
-      this.updateSurplusCategory();
-      
-      // Return the updated category for validation
-      return updatedCategory;
-    }
-    return category;
-  }
 
   // Annual spending summary (includes taxes as first item, excludes surplus)
   getAnnualSpendingSummary = computed(() => {
@@ -627,25 +535,14 @@ export class BudgetFormComponent implements OnInit {
         let monthly: number;
         let annual: number;
         
-        if ((cat.categoryType === 'expected' || cat.categoryType === 'savings') && cat.useSubcategories) {
-          // For categories with subcategories, sum them up and convert to monthly
-          const subcatTotal = cat.subcategories.reduce((sum, subcat) => {
-            const amount = parseFloat(subcat.expectedAmount) || 0;
-            const monthlyAmount = subcat.expectedAmountPeriod === 'annual' ? amount / 12 : amount;
-            return sum + monthlyAmount;
-          }, 0);
-          monthly = subcatTotal;
-          annual = subcatTotal * 12;
+        // For categories, respect the allocatedAmountPeriod
+        const amount = parseFloat(cat.allocatedAmount) || 0;
+        if (cat.allocatedAmountPeriod === 'annual') {
+          monthly = amount / 12;
+          annual = amount;
         } else {
-          // For regular categories, respect the allocatedAmountPeriod
-          const amount = parseFloat(cat.allocatedAmount) || 0;
-          if (cat.allocatedAmountPeriod === 'annual') {
-            monthly = amount / 12;
-            annual = amount;
-          } else {
-            monthly = amount;
-            annual = amount * 12;
-          }
+          monthly = amount;
+          annual = amount * 12;
         }
         
         return {
@@ -665,22 +562,6 @@ export class BudgetFormComponent implements OnInit {
 
   getCategoryAmount(amount: string): number {
     return parseFloat(amount) || 0;
-  }
-
-  // Calculate total from subcategories for a given category index (returns monthly amount)
-  getSubcategoryTotal(categoryIndex: number): number {
-    const categories = this.categories();
-    const category = categories[categoryIndex];
-    if (category && category.useSubcategories && (category.categoryType === 'expected' || category.categoryType === 'savings') && category.subcategories) {
-      return category.subcategories.reduce((sum, subcat) => {
-        const amount = parseFloat(subcat.expectedAmount || '0') || 0;
-        // Convert to monthly if needed
-        return sum + (subcat.expectedAmountPeriod === 'annual' ? amount / 12 : amount);
-      }, 0);
-    }
-    // For non-subcategory categories, return monthly amount
-    const amount = parseFloat(category?.allocatedAmount || '0') || 0;
-    return category?.allocatedAmountPeriod === 'annual' ? amount / 12 : amount;
   }
 
   onSubmit() {
@@ -703,43 +584,21 @@ export class BudgetFormComponent implements OnInit {
       }
       
       // For Expected/Savings categories with subcategories, validate subcategories
-      if ((cat.categoryType === 'expected' || cat.categoryType === 'savings') && cat.useSubcategories) {
-        if (cat.subcategories.length === 0) {
-          this.error.set(`Category "${cat.name}" must have at least one subcategory or disable subcategories`);
-          return;
-        }
-        for (const subcat of cat.subcategories) {
-          if (!subcat.name || !subcat.expectedAmount) {
-            this.error.set(`All subcategories for "${cat.name}" must have a name and expected amount`);
-            return;
-          }
-        }
-        // Ensure allocatedAmount matches sum of subcategories
-        const total = cat.subcategories.reduce((sum, subcat) => {
-          return sum + (parseFloat(subcat.expectedAmount || '0') || 0);
-        }, 0);
-        cat.allocatedAmount = total.toFixed(2);
-        
-        // Validate that the total is 0 or greater (allow 0)
-        if (total < 0) {
-          this.error.set(`Category "${cat.name}" has an invalid total amount. Please check your subcategory amounts.`);
-          return;
-        }
-      } else {
-        // For categories without subcategories, validate allocatedAmount (allow 0)
-        const amount = parseFloat(cat.allocatedAmount || '0');
-        if (isNaN(amount) || amount < 0) {
-          this.error.set(`Category "${cat.name}" must have a valid allocated amount (0 or greater)`);
-          return;
-        }
+      // Validate allocatedAmount (allow 0)
+      const amount = parseFloat(cat.allocatedAmount || '0');
+      if (isNaN(amount) || amount < 0) {
+        this.error.set(`Category "${cat.name}" must have a valid allocated amount (0 or greater)`);
+        return;
       }
     }
 
     const totalAllocated = this.getTotalAllocated();
+    const totalSavings = this.getTotalSavings();
     const netIncome = this.getNetIncome();
+    const availableForSpending = netIncome - totalSavings;
 
-    if (totalAllocated > netIncome) {
-      this.error.set(`Total allocated (${this.formatCurrency(totalAllocated)}) exceeds net income after taxes (${this.formatCurrency(netIncome)})`);
+    if (totalAllocated > availableForSpending) {
+      this.error.set(`Total allocated (${this.formatCurrency(totalAllocated)}) exceeds available income after taxes and savings (${this.formatCurrency(availableForSpending)})`);
       return;
     }
 
@@ -814,32 +673,10 @@ export class BudgetFormComponent implements OnInit {
               allocatedAmount: cat.allocatedAmount,
               categoryType: cat.categoryType,
               accumulatedTotal: cat.accumulatedTotal,
-              // Only include estimationMonths if useEstimation is true (and not using subcategories)
-              estimationMonths: (cat.categoryType === 'expected' && !cat.useSubcategories && cat.useEstimation) ? cat.estimationMonths : undefined,
-              isBufferCategory: cat.isBufferCategory,
-              bufferPriority: cat.bufferPriority,
               color: cat.color || null
             };
 
-            const createdCategory = await this.budgetService.createBudgetCategory(categoryData).toPromise();
-            if (!createdCategory) continue;
-
-            // Create subcategories for Expected/Savings categories (if using subcategories)
-            if ((cat.categoryType === 'expected' || cat.categoryType === 'savings') && cat.useSubcategories && createdCategory.id && cat.subcategories.length > 0) {
-              for (const subcat of cat.subcategories) {
-                if (subcat.name && subcat.expectedAmount) {
-                  await this.budgetService.createBudgetCategorySubcategory(
-                    createdCategory.id,
-                    { 
-                      name: subcat.name, 
-                      expectedAmount: subcat.expectedAmount,
-                      useEstimation: subcat.useEstimation || false,
-                      estimationMonths: subcat.useEstimation ? subcat.estimationMonths : undefined
-                    }
-                  ).toPromise();
-                }
-              }
-            }
+            await this.budgetService.createBudgetCategory(categoryData).toPromise();
           }
 
           this.router.navigate(['/budgets']);
@@ -884,91 +721,40 @@ export class BudgetFormComponent implements OnInit {
         const categoryData: UpdateBudgetCategoryRequest = {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
-          accumulatedTotal: cat.accumulatedTotal,
-          estimationMonths: (cat.categoryType === 'expected' && !cat.useSubcategories && cat.useEstimation) ? cat.estimationMonths : undefined,
-          isBufferCategory: cat.isBufferCategory,
-          bufferPriority: cat.bufferPriority,
-          color: cat.color || null
+          accumulatedTotal: cat.accumulatedTotal || '0',
+          color: cat.color || null,
+          autoMoveSurplus: cat.autoMoveSurplus ?? false,
+          surplusTargetCategoryId: cat.surplusTargetCategoryId ?? null,
+          autoMoveDeficit: cat.autoMoveDeficit ?? false,
+          deficitSourceCategoryId: cat.deficitSourceCategoryId ?? null,
+          expectedMerchantName: cat.expectedMerchantName ?? null,
+          hideFromTransactionLists: cat.hideFromTransactionLists ?? false,
+          isTaxDeductible: cat.isTaxDeductible ?? false,
+          isSubjectToFica: cat.isSubjectToFica ?? false,
+          isUnconnectedAccount: cat.isUnconnectedAccount ?? false,
         };
 
         await this.budgetService.updateBudgetCategory(cat.id, categoryData).toPromise();
-
-        // Update subcategories
-        if ((cat.categoryType === 'expected' || cat.categoryType === 'savings') && cat.useSubcategories && cat.subcategories.length > 0) {
-          // Get existing subcategories
-          const existingSubcats = await this.budgetService.getBudgetCategorySubcategories(cat.id).toPromise();
-          const existingSubcatMap = new Map(existingSubcats?.map(sub => [sub.id, sub]) || []);
-
-          for (const subcat of cat.subcategories) {
-            if (subcat.id && existingSubcatMap.has(subcat.id)) {
-              // Update existing subcategory
-              await this.budgetService.updateBudgetCategorySubcategory(
-                cat.id,
-                subcat.id,
-                {
-                  name: subcat.name,
-                  expectedAmount: subcat.expectedAmount,
-                  useEstimation: subcat.useEstimation || false,
-                  estimationMonths: subcat.useEstimation ? subcat.estimationMonths : undefined
-                }
-              ).toPromise();
-            } else if (subcat.name && subcat.expectedAmount) {
-              // Create new subcategory
-              await this.budgetService.createBudgetCategorySubcategory(
-                cat.id,
-                {
-                  name: subcat.name,
-                  expectedAmount: subcat.expectedAmount,
-                  useEstimation: subcat.useEstimation || false,
-                  estimationMonths: subcat.useEstimation ? subcat.estimationMonths : undefined
-                }
-              ).toPromise();
-            }
-          }
-
-          // Delete subcategories that were removed
-          const currentSubcatIds = new Set(cat.subcategories.filter(s => s.id).map(s => s.id));
-          for (const existingSubcat of existingSubcats || []) {
-            if (existingSubcat.id && !currentSubcatIds.has(existingSubcat.id)) {
-              await this.budgetService.deleteBudgetCategorySubcategory(
-                cat.id,
-                existingSubcat.id
-              ).toPromise();
-            }
-          }
-        }
       } else {
         // Create new category
         const categoryData: CreateBudgetCategoryRequest = {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
           categoryType: cat.categoryType,
-          accumulatedTotal: cat.accumulatedTotal,
-          estimationMonths: (cat.categoryType === 'expected' && !cat.useSubcategories && cat.useEstimation) ? cat.estimationMonths : undefined,
-          isBufferCategory: cat.isBufferCategory,
-          bufferPriority: cat.bufferPriority,
-          color: cat.color || null
+          accumulatedTotal: cat.accumulatedTotal || '0',
+          color: cat.color || null,
+          autoMoveSurplus: cat.autoMoveSurplus ?? false,
+          surplusTargetCategoryId: cat.surplusTargetCategoryId ?? null,
+          autoMoveDeficit: cat.autoMoveDeficit ?? false,
+          deficitSourceCategoryId: cat.deficitSourceCategoryId ?? null,
+          expectedMerchantName: cat.expectedMerchantName ?? null,
+          hideFromTransactionLists: cat.hideFromTransactionLists ?? false,
+          isTaxDeductible: cat.isTaxDeductible ?? false,
+          isSubjectToFica: cat.isSubjectToFica ?? false,
+          isUnconnectedAccount: cat.isUnconnectedAccount ?? false,
         };
 
-        const createdCategory = await this.budgetService.createBudgetCategory(categoryData).toPromise();
-        if (!createdCategory || !createdCategory.id) continue;
-
-        // Create subcategories
-        if ((cat.categoryType === 'expected' || cat.categoryType === 'savings') && cat.useSubcategories && createdCategory.id && cat.subcategories.length > 0) {
-          for (const subcat of cat.subcategories) {
-            if (subcat.name && subcat.expectedAmount) {
-              await this.budgetService.createBudgetCategorySubcategory(
-                createdCategory.id,
-                {
-                  name: subcat.name,
-                  expectedAmount: subcat.expectedAmount,
-                  useEstimation: subcat.useEstimation || false,
-                  estimationMonths: subcat.useEstimation ? subcat.estimationMonths : undefined
-                }
-              ).toPromise();
-            }
-          }
-        }
+        await this.budgetService.createBudgetCategory(categoryData).toPromise();
       }
     }
 

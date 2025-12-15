@@ -4,13 +4,10 @@ import { ApiService } from './api.service';
 import {
   Budget,
   BudgetCategory,
-  BudgetCategorySubcategory,
   CreateBudgetRequest,
   UpdateBudgetRequest,
   CreateBudgetCategoryRequest,
-  UpdateBudgetCategoryRequest,
-  CreateBudgetCategorySubcategoryRequest,
-  UpdateBudgetCategorySubcategoryRequest
+  UpdateBudgetCategoryRequest
 } from '../models/budget.model';
 
 @Injectable({
@@ -58,47 +55,20 @@ export class BudgetService {
     return this.api.delete<void>(`/budgets/categories/${categoryId}`);
   }
 
-  // Subcategory methods
-  getBudgetCategorySubcategories(categoryId: number): Observable<BudgetCategorySubcategory[]> {
-    return this.api.get<BudgetCategorySubcategory[]>(`/budgets/categories/${categoryId}/subcategories`);
+  getSavingsSnapshots(categoryId?: number): Observable<any[]> {
+    const params: any = {};
+    if (categoryId) params.categoryId = categoryId;
+    const queryString = new URLSearchParams(params).toString();
+    return this.api.get<any[]>(`/budgets/savings-snapshots${queryString ? '?' + queryString : ''}`);
   }
 
-  createBudgetCategorySubcategory(
-    categoryId: number,
-    data: CreateBudgetCategorySubcategoryRequest
-  ): Observable<BudgetCategorySubcategory> {
-    return this.api.post<BudgetCategorySubcategory>(
-      `/budgets/categories/${categoryId}/subcategories`,
-      data
-    );
+  getFundMovements(): Observable<any[]> {
+    return this.api.get<any[]>('/budgets/fund-movements');
   }
 
-  updateBudgetCategorySubcategory(
-    categoryId: number,
-    subcategoryId: number,
-    data: UpdateBudgetCategorySubcategoryRequest
-  ): Observable<BudgetCategorySubcategory> {
-    return this.api.put<BudgetCategorySubcategory>(
-      `/budgets/categories/${categoryId}/subcategories/${subcategoryId}`,
-      data
-    );
+  processMonthEnd(year: number, month: number): Observable<any> {
+    return this.api.post('/budgets/process-month-end', { year, month });
   }
 
-  deleteBudgetCategorySubcategory(
-    categoryId: number,
-    subcategoryId: number
-  ): Observable<void> {
-    return this.api.delete<void>(
-      `/budgets/categories/${categoryId}/subcategories/${subcategoryId}`
-    );
-  }
-
-  // Buffer reduction
-  reduceBufferCategories(categoryId: number, overageAmount: number): Observable<any> {
-    return this.api.post<any>(
-      `/budgets/categories/${categoryId}/reduce-buffer`,
-      { overageAmount }
-    );
-  }
 }
 

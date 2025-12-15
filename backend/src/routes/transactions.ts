@@ -2,15 +2,13 @@ import express, { Response } from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import {
   getTransactionsForUser,
-  getTransactionsForBudget,
   assignTransactionCategory,
   splitTransaction,
   removeTransactionCategory,
-  getUserCategoryOverrides,
   generateMonthlySummary,
   getMonthlySummaries,
 } from '../services/transactions';
-import { transactionCategoryOverrides, budgets, plaidItems, plaidTransactions, plaidAccounts } from '../db/schema';
+import { budgets, plaidItems, plaidTransactions, plaidAccounts } from '../db/schema';
 import { db } from '../db';
 import { eq, and } from 'drizzle-orm';
 import { syncTransactionsForItem } from '../services/plaid';
@@ -33,8 +31,9 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
     const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
     const reviewed = req.query.reviewed === 'true' ? true : req.query.reviewed === 'false' ? false : null;
+    const includeHiddenFixed = req.query.includeHiddenFixed === 'true'; // Default: false (hide Fixed categories with hideFromTransactionLists)
 
-    const transactions = await getTransactionsForUser(req.userId, limit, offset, reviewed);
+    const transactions = await getTransactionsForUser(req.userId, limit, offset, reviewed, includeHiddenFixed);
 
     res.json(transactions);
   } catch (error: any) {
@@ -55,7 +54,7 @@ router.post('/:transactionId/category', async (req: AuthRequest, res: Response) 
       return res.status(400).json({ error: 'Invalid transaction ID' });
     }
 
-    const { categoryId, amount, subcategoryId } = req.body;
+    const { categoryId, amount } = req.body;
     if (!categoryId || !amount) {
       return res.status(400).json({ error: 'categoryId and amount are required' });
     }
@@ -64,13 +63,8 @@ router.post('/:transactionId/category', async (req: AuthRequest, res: Response) 
       transactionId,
       categoryId,
       amount.toString(),
-      true, // Manual assignment
-      subcategoryId || null
+      true // Manual assignment
     );
-
-    // Store override for future LLM context
-    // TODO: Get merchant name and plaid category from transaction
-    // For now, just store the category override
 
     res.json(assignment);
   } catch (error: any) {
@@ -125,21 +119,6 @@ router.delete('/:transactionId/categories/:categoryId', async (req: AuthRequest,
   } catch (error: any) {
     console.error('Error removing category:', error);
     res.status(500).json({ error: 'Failed to remove category' });
-  }
-});
-
-// Get user's category overrides
-router.get('/overrides', async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const overrides = await getUserCategoryOverrides(req.userId);
-    res.json(overrides);
-  } catch (error: any) {
-    console.error('Error getting overrides:', error);
-    res.status(500).json({ error: 'Failed to get overrides' });
   }
 });
 
@@ -219,12 +198,14 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
     // Get date range from budget and convert to YYYY-MM-DD format
     // Budget dates are stored as date type in PostgreSQL, which Drizzle returns as Date objects
     // Plaid requires dates in 'YYYY-MM-DD' format (no time component)
-    const startDate = budget.startDate instanceof Date 
-      ? budget.startDate.toISOString().split('T')[0]
-      : String(budget.startDate).split('T')[0]; // Extract just YYYY-MM-DD if it's a string
-    const endDate = budget.endDate instanceof Date
-      ? budget.endDate.toISOString().split('T')[0]
-      : String(budget.endDate).split('T')[0]; // Extract just YYYY-MM-DD if it's a string
+    const startDateValue = budget.startDate as unknown;
+    const startDate = startDateValue instanceof Date 
+      ? (startDateValue as Date).toISOString().split('T')[0]
+      : String(startDateValue).split('T')[0]; // Extract just YYYY-MM-DD if it's a string
+    const endDateValue = budget.endDate as unknown;
+    const endDate = endDateValue instanceof Date
+      ? (endDateValue as Date).toISOString().split('T')[0]
+      : String(endDateValue).split('T')[0]; // Extract just YYYY-MM-DD if it's a string
 
     console.log(`\n=== Starting transaction sync for user ${req.userId} ===`);
     console.log(`Budget date range: ${startDate} to ${endDate}`);
@@ -374,8 +355,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                     storedTx.id,
                     categorizationResult.categoryId,
                     tx.amount.toString(),
-                    false, // LLM-assigned
-                    categorizationResult.subcategoryId
+                    false // LLM-assigned
                   );
                   totalCategorized++;
                 }

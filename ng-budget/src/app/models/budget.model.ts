@@ -1,6 +1,6 @@
 export type FilingStatus = 'single' | 'married-jointly' | 'married-separately' | 'head-of-household';
 
-export type CategoryType = 'expected' | 'savings' | 'variable' | 'surplus' | 'excluded';
+export type CategoryType = 'fixed' | 'savings' | 'variable' | 'surplus' | 'excluded';
 
 export interface Budget {
   id: number;
@@ -28,25 +28,20 @@ export interface BudgetCategory {
   accumulatedTotal?: string;
   billCount?: number | null;
   thresholdAmount?: string | null;
-  estimationMonths?: number;
-  isBufferCategory?: boolean;
-  bufferPriority?: number;
   goalLimit?: string | null;
   color?: string | null;
-  subcategories?: BudgetCategorySubcategory[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface BudgetCategorySubcategory {
-  id: number;
-  categoryId: number;
-  name: string;
-  expectedAmount: string;
-  actualAmount?: string | null;
-  billDate?: string | null;
-  useEstimation?: boolean;
-  estimationMonths?: number | null;
+  // Variable category fields
+  autoMoveSurplus?: boolean;
+  surplusTargetCategoryId?: number | null;
+  autoMoveDeficit?: boolean;
+  deficitSourceCategoryId?: number | null;
+  // Fixed category fields
+  expectedMerchantName?: string | null;
+  hideFromTransactionLists?: boolean;
+  // Savings category fields
+  isTaxDeductible?: boolean;
+  isSubjectToFica?: boolean;
+  isUnconnectedAccount?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -75,10 +70,19 @@ export interface CreateBudgetCategoryRequest {
   allocatedAmount: string;
   categoryType?: CategoryType;
   accumulatedTotal?: string;
-  estimationMonths?: number;
-  isBufferCategory?: boolean;
-  bufferPriority?: number;
   color?: string | null;
+  // Variable category fields
+  autoMoveSurplus?: boolean;
+  surplusTargetCategoryId?: number | null;
+  autoMoveDeficit?: boolean;
+  deficitSourceCategoryId?: number | null;
+  // Fixed category fields
+  expectedMerchantName?: string | null;
+  hideFromTransactionLists?: boolean;
+  // Savings category fields
+  isTaxDeductible?: boolean;
+  isSubjectToFica?: boolean;
+  isUnconnectedAccount?: boolean;
 }
 
 export interface UpdateBudgetCategoryRequest {
@@ -87,26 +91,19 @@ export interface UpdateBudgetCategoryRequest {
   spentAmount?: string;
   categoryType?: CategoryType;
   accumulatedTotal?: string;
-  estimationMonths?: number;
-  isBufferCategory?: boolean;
-  bufferPriority?: number;
   color?: string | null;
-}
-
-export interface CreateBudgetCategorySubcategoryRequest {
-  name: string;
-  expectedAmount: string;
-  useEstimation?: boolean;
-  estimationMonths?: number;
-}
-
-export interface UpdateBudgetCategorySubcategoryRequest {
-  name?: string;
-  expectedAmount?: string;
-  actualAmount?: string | null;
-  billDate?: string | null;
-  useEstimation?: boolean;
-  estimationMonths?: number;
+  // Variable category fields
+  autoMoveSurplus?: boolean;
+  surplusTargetCategoryId?: number | null;
+  autoMoveDeficit?: boolean;
+  deficitSourceCategoryId?: number | null;
+  // Fixed category fields
+  expectedMerchantName?: string | null;
+  hideFromTransactionLists?: boolean;
+  // Savings category fields
+  isTaxDeductible?: boolean;
+  isSubjectToFica?: boolean;
+  isUnconnectedAccount?: boolean;
 }
 
 export interface Transaction {
@@ -132,7 +129,6 @@ export interface Transaction {
 export interface TransactionCategory {
   id: number;
   categoryId: number;
-  subcategoryId?: number | null;
   amount: string;
   isManual: boolean;
   categoryName?: string;
@@ -140,16 +136,6 @@ export interface TransactionCategory {
 
 export interface TransactionWithCategories extends Transaction {
   categories: TransactionCategory[];
-}
-
-export interface TransactionCategoryOverride {
-  id: number;
-  userId: number;
-  merchantName: string | null;
-  plaidCategoryId: string | null;
-  categoryId: number;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface MonthlyCategorySummary {
@@ -161,7 +147,33 @@ export interface MonthlyCategorySummary {
   month: number;
   totalSpent: string;
   transactionCount: number;
+  accumulatedTotal?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FundMovement {
+  id: number;
+  userId: number;
+  budgetId: number;
+  fromCategoryId: number | null;
+  toCategoryId: number | null;
+  amount: string;
+  movementType: 'surplus' | 'deficit';
+  variableCategoryId: number;
+  month: number;
+  year: number;
+  createdAt: string;
+}
+
+export interface SavingsSnapshot {
+  id: number;
+  userId: number;
+  budgetId: number;
+  categoryId: number;
+  year: number;
+  month: number;
+  accumulatedTotal: string;
+  createdAt: string;
 }
 

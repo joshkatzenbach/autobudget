@@ -1,7 +1,8 @@
 import { Component, Input, OnInit, OnChanges, SimpleChanges, AfterViewInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Chart, ChartConfiguration, ChartData, registerables } from 'chart.js';
-import { Budget, BudgetCategory } from '../../../models/budget.model';
+import { Budget, BudgetCategory, SavingsSnapshot } from '../../../models/budget.model';
+import { BudgetService } from '../../../services/budget.service';
 
 Chart.register(...registerables);
 
@@ -17,11 +18,27 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
   @Input() categories: BudgetCategory[] = [];
   
   @ViewChild('variableSpendingChart', { static: false }) chartCanvas!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('savingsChart', { static: false }) savingsChartCanvas!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('savingsLineChart', { static: false }) savingsLineChartCanvas!: ElementRef<HTMLCanvasElement>;
   
   variableChart: Chart | null = null;
+  savingsChart: Chart | null = null;
+  savingsLineChart: Chart | null = null;
+  selectedSavingsCategory: BudgetCategory | null = null;
+  savingsSnapshots: SavingsSnapshot[] = [];
 
-  ngOnInit() {
-    // Chart will be created in ngAfterViewInit
+  constructor(private budgetService: BudgetService) {}
+
+  async ngOnInit() {
+    await this.loadSavingsSnapshots();
+  }
+
+  async loadSavingsSnapshots() {
+    try {
+      this.savingsSnapshots = await this.budgetService.getSavingsSnapshots().toPromise() || [];
+    } catch (error) {
+      console.error('Error loading savings snapshots:', error);
+    }
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -29,12 +46,20 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
     if (this.chartCanvas) {
       this.updateVariableSpendingChart();
     }
+    if (this.savingsChartCanvas && !this.selectedSavingsCategory) {
+      this.updateSavingsChart();
+    }
+    if (this.savingsLineChartCanvas && this.selectedSavingsCategory) {
+      this.updateSavingsLineChart();
+    }
   }
 
-  ngAfterViewInit() {
+  async ngAfterViewInit() {
     // Wait a tick to ensure view is fully initialized
+    await this.loadSavingsSnapshots();
     setTimeout(() => {
       this.updateVariableSpendingChart();
+      this.updateSavingsChart();
     }, 0);
   }
 
@@ -160,9 +185,178 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
     this.variableChart = new Chart(this.chartCanvas.nativeElement, config);
   }
 
+  async onSavingsCategoryClick(category: BudgetCategory) {
+    this.selectedSavingsCategory = category;
+    try {
+      const snapshots = await this.budgetService.getSavingsSnapshots(category.id).toPromise() || [];
+      this.savingsSnapshots = snapshots;
+      setTimeout(() => {
+        this.updateSavingsLineChart();
+      }, 0);
+    } catch (error) {
+      console.error('Error loading category snapshots:', error);
+    }
+  }
+
+  private updateSavingsLineChart() {
+    if (!this.savingsLineChartCanvas || !this.selectedSavingsCategory || this.savingsSnapshots.length === 0) {
+      return;
+    }
+
+    // Sort snapshots by year and month
+    const sorted = [...this.savingsSnapshots].sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      return a.month - b.month;
+    });
+
+    const labels = sorted.map(s => `${new Date(s.year, s.month - 1).toLocaleString('default', { month: 'short', year: 'numeric' })}`);
+    const data = sorted.map(s => parseFloat(s.accumulatedTotal));
+
+    const chartData: ChartData<'line'> = {
+      labels,
+      datasets: [{
+        label: this.selectedSavingsCategory.name,
+        data,
+        borderColor: this.selectedSavingsCategory.color || '#667eea',
+        backgroundColor: (this.selectedSavingsCategory.color || '#667eea') + '40',
+        fill: true,
+        tension: 0.4,
+      }],
+    };
+
+    const config: ChartConfiguration<'line'> = {
+      type: 'line',
+      data: chartData,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return `$${Number(context.parsed.y).toFixed(2)}`;
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: function(value) {
+                return '$' + value;
+              },
+            },
+          },
+        },
+      },
+    };
+
+    if (this.savingsLineChart) {
+      this.savingsLineChart.destroy();
+    }
+
+    this.savingsLineChart = new Chart(this.savingsLineChartCanvas.nativeElement, config);
+  }
+
+  private updateSavingsChart() {
+    if (!this.savingsChartCanvas || !this.categories || this.categories.length === 0) {
+      return;
+    }
+
+    const savingsCategories = this.categories.filter(cat => cat.categoryType === 'savings');
+    if (savingsCategories.length === 0) {
+      return;
+    }
+
+    const labels = savingsCategories.map(cat => cat.name);
+    const data = savingsCategories.map(cat => parseFloat(cat.accumulatedTotal || '0'));
+    const colors = savingsCategories.map(cat => cat.color || '#667eea');
+
+    const chartData: ChartData<'bar'> = {
+      labels,
+      datasets: [{
+        label: 'Cumulative Savings',
+        data,
+        backgroundColor: colors,
+        borderColor: colors.map(c => c + 'CC'),
+        borderWidth: 2,
+      }],
+    };
+
+    const config: ChartConfiguration<'bar'> = {
+      type: 'bar',
+      data: chartData,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false,
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return `$${Number(context.parsed.y).toFixed(2)}`;
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: function(value) {
+                return '$' + value;
+              },
+            },
+          },
+        },
+        onClick: (event, elements) => {
+          if (elements.length > 0) {
+            const index = elements[0].index;
+            this.onSavingsCategoryClick(savingsCategories[index]);
+          }
+        },
+      },
+    };
+
+    if (this.savingsChart) {
+      this.savingsChart.destroy();
+    }
+
+    this.savingsChart = new Chart(this.savingsChartCanvas.nativeElement, config);
+  }
+
   ngOnDestroy() {
     if (this.variableChart) {
       this.variableChart.destroy();
     }
+    if (this.savingsChart) {
+      this.savingsChart.destroy();
+    }
+    if (this.savingsLineChart) {
+      this.savingsLineChart.destroy();
+    }
+  }
+
+  getFixedCategories() {
+    return this.categories.filter(cat => cat.categoryType === 'fixed');
+  }
+
+  getFixedCategorySavings(category: BudgetCategory): number {
+    return parseFloat(category.accumulatedTotal || '0');
+  }
+
+  getFixedCategoryExpected(category: BudgetCategory): number {
+    return parseFloat(category.allocatedAmount || '0');
+  }
+
+  formatCurrency(value: number): string {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
   }
 }

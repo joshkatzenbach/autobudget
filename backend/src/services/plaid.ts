@@ -148,7 +148,7 @@ export async function getTransactions(accessToken: string, startDate: string, en
       }
       
       allTransactions.push(...response.data.transactions);
-      cursor = response.data.next_cursor || undefined;
+      cursor = (response.data as any).next_cursor || undefined;
     } while (cursor);
 
     console.log(`Total transactions fetched: ${allTransactions.length}`);

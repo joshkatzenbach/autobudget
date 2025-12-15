@@ -292,7 +292,7 @@ export async function createGroupDM(
 
     return {
       id: result.channel.id || '',
-      name: result.channel.name || undefined,
+      name: (result.channel as any).name || undefined,
     };
   } catch (error: any) {
     console.error('Error creating group DM:', error);

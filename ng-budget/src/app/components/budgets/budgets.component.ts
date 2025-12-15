@@ -23,7 +23,7 @@ export class BudgetsComponent implements OnInit {
   error = signal<string | null>(null);
   
   // Tab management
-  activeTab = signal<'summary' | 'transactions' | 'analytics' | 'test'>('summary');
+  activeTab = signal<'summary' | 'transactions' | 'analytics' | 'edit' | 'test'>('summary');
   
   // Test tab state
   generatingTestTransaction = signal(false);
@@ -36,6 +36,7 @@ export class BudgetsComponent implements OnInit {
   transactionsOffset = signal(0);
   hasMoreTransactions = signal(true);
   reviewedFilter = signal<'all' | 'reviewed' | 'unreviewed'>('all');
+  showHiddenFixed = signal(false); // Toggle to show/hide Fixed categories with hideFromTransactionLists
   
   syncLoading = signal(false);
   
@@ -66,11 +67,11 @@ export class BudgetsComponent implements OnInit {
   categories = signal<BudgetCategory[]>([]);
   selectedTransaction = signal<TransactionWithCategories | null>(null);
   splitMode = signal(false);
-  splitSplits = signal<Array<{categoryId: number | null; subcategoryId: number | null; amount: string; useRemaining: boolean}>>([]);
+  splitSplits = signal<Array<{categoryId: number | null; amount: string; useRemaining: boolean}>>([]);
   
   // Inline editing state
   editingTransactionId = signal<number | null>(null);
-  editingSplits = signal<Map<number, Array<{categoryId: number | null; subcategoryId: number | null; amount: string; useRemaining: boolean}>>>(new Map());
+  editingSplits = signal<Map<number, Array<{categoryId: number | null; amount: string; useRemaining: boolean}>>>(new Map());
 
   constructor(
     private budgetService: BudgetService,
@@ -161,6 +162,10 @@ export class BudgetsComponent implements OnInit {
     this.router.navigate(['/settings/slack']);
   }
 
+  navigateToEditBudget() {
+    this.router.navigate(['/budgets/edit']);
+  }
+
   formatDate(dateString: string): string {
     const date = new Date(dateString);
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -200,7 +205,25 @@ export class BudgetsComponent implements OnInit {
   getAssetAccounts() {
     const snapshot = this.balanceSnapshot();
     if (!snapshot) return [];
-    return snapshot.accounts.filter(acc => acc.isAsset);
+    const plaidAccounts = snapshot.accounts.filter(acc => acc.isAsset);
+    
+    // Add unconnected savings accounts as virtual accounts
+    const unconnectedSavings = this.categories()
+      .filter(cat => cat.categoryType === 'savings' && cat.isUnconnectedAccount)
+      .map(cat => ({
+        accountId: `unconnected_${cat.id}`,
+        name: cat.name,
+        originalName: cat.name,
+        customName: null,
+        type: 'depository',
+        subtype: 'savings',
+        balance: parseFloat(cat.accumulatedTotal || '0'),
+        mask: null,
+        institutionName: 'Unconnected Account',
+        isAsset: true
+      }));
+    
+    return [...plaidAccounts, ...unconnectedSavings];
   }
 
   getLiabilityAccounts() {
@@ -262,78 +285,13 @@ export class BudgetsComponent implements OnInit {
     });
   }
 
-  quickChangeSubcategory(transactionId: number, categoryIndex: number, subcategoryId: number | null) {
-    const transaction = this.transactions().find(t => t.id === transactionId);
-    if (!transaction) return;
-
-    const category = transaction.categories[categoryIndex];
-    if (!category) return;
-
-    // Store current transaction count to maintain pagination
-    const currentCount = this.transactions().length;
-
-    // Update the category assignment with the new subcategoryId
-    // For single category transactions, we can just reassign with subcategory
-    // For split transactions, we need to update all splits
-    if (transaction.categories.length === 1) {
-      // Single category - just reassign with subcategory
-      this.transactionService.assignTransactionCategory(
-        transactionId,
-        category.categoryId,
-        this.parseAmount(category.amount),
-        subcategoryId
-      ).subscribe({
-        next: () => {
-          // Reload all currently visible transactions to maintain pagination state
-          this.transactionsOffset.set(0);
-          this.loadTransactions(currentCount, 0);
-        },
-        error: (err) => {
-          alert(err.error?.error || 'Failed to update subcategory');
-        }
-      });
-    } else {
-      // Split transaction - need to update all splits
-      const splits = transaction.categories.map(cat => ({
-        categoryId: cat.categoryId,
-        subcategoryId: cat.id === category.id ? subcategoryId : (cat.subcategoryId || null),
-        amount: this.parseAmount(cat.amount)
-      }));
-      
-      this.transactionService.splitTransaction(transactionId, splits).subscribe({
-        next: () => {
-          // Reload all currently visible transactions to maintain pagination state
-          this.transactionsOffset.set(0);
-          this.loadTransactions(currentCount, 0);
-        },
-        error: (err) => {
-          alert(err.error?.error || 'Failed to update subcategory');
-        }
-      });
-    }
-  }
 
   onCategoryChangeInModal(splitIndex: number, newCategoryId: number | null) {
     const splits = this.splitSplits().map((split, i) => {
       if (i === splitIndex) {
         return {
           ...split,
-          categoryId: newCategoryId,
-          subcategoryId: null // Reset subcategory when category changes
-        };
-      }
-      return split;
-    });
-    // Create a new array to ensure change detection
-    this.splitSplits.set([...splits]);
-  }
-
-  onSubcategoryChangeInModal(splitIndex: number, newSubcategoryId: number | null) {
-    const splits = this.splitSplits().map((split, i) => {
-      if (i === splitIndex) {
-        return {
-          ...split,
-          subcategoryId: newSubcategoryId
+          categoryId: newCategoryId
         };
       }
       return split;
@@ -343,35 +301,24 @@ export class BudgetsComponent implements OnInit {
   }
 
   onAmountChangeInModal(splitIndex: number, newAmount: string) {
-    const splits = this.splitSplits().map((split, i) => {
-      if (i === splitIndex) {
-        return {
-          ...split,
-          amount: newAmount,
-          useRemaining: false // Uncheck useRemaining when manually editing amount
-        };
-      }
-      return split;
-    });
-    // Create a new array to ensure change detection
-    this.splitSplits.set([...splits]);
-    // Recalculate useRemaining if needed
-    this.recalculateUseRemainingInModal();
+    const splits = [...this.splitSplits()];
+    const isLastSplit = splitIndex === splits.length - 1;
+    
+    // Don't allow editing the last split's amount (it uses remaining)
+    if (isLastSplit) {
+      return;
+    }
+    
+    splits[splitIndex] = {
+      ...splits[splitIndex],
+      amount: newAmount
+    };
+    
+    this.splitSplits.set(splits);
+    // Update the last split's amount when other amounts change
+    this.updateLastSplitAmount();
   }
 
-  recalculateUseRemainingInModal() {
-    const splits = [...this.splitSplits()];
-    const hasUseRemaining = splits.some(split => split.useRemaining);
-    
-    if (hasUseRemaining) {
-      splits.forEach((split, i) => {
-        if (split.useRemaining) {
-          split.amount = this.calculateRemainingAmountInModal(i).toFixed(2);
-        }
-      });
-      this.splitSplits.set([...splits]);
-    }
-  }
 
   quickChangeCategory(transactionId: number, categoryIndex: number, newCategoryId: number | null, amount: number) {
     const transaction = this.transactions().find(t => t.id === transactionId);
@@ -417,7 +364,6 @@ export class BudgetsComponent implements OnInit {
 
       const splits = transaction.categories.map((cat, i) => ({
         categoryId: i === categoryIndex ? newCategoryId : cat.categoryId,
-        subcategoryId: i === categoryIndex ? null : (cat.subcategoryId || null), // Reset subcategory when category changes
         amount: this.parseAmount(cat.amount)
       }));
 
@@ -438,7 +384,7 @@ export class BudgetsComponent implements OnInit {
       // Store current transaction count to maintain pagination
       const currentCount = this.transactions().length;
 
-      this.transactionService.assignTransactionCategory(transactionId, newCategoryId, amount, category.subcategoryId || null).subscribe({
+      this.transactionService.assignTransactionCategory(transactionId, newCategoryId, amount).subscribe({
         next: () => {
           // Reload all currently visible transactions to maintain pagination state
           this.transactionsOffset.set(0);
@@ -460,7 +406,6 @@ export class BudgetsComponent implements OnInit {
       this.splitMode.set(true);
       this.splitSplits.set(transaction.categories.map(cat => ({
         categoryId: cat.categoryId,
-        subcategoryId: cat.subcategoryId || null,
         amount: cat.amount,
         useRemaining: false
       })));
@@ -468,7 +413,6 @@ export class BudgetsComponent implements OnInit {
       this.splitMode.set(false);
       this.splitSplits.set([{
         categoryId: transaction.categories[0].categoryId,
-        subcategoryId: null,
         amount: transaction.amount,
         useRemaining: false
       }]);
@@ -476,7 +420,6 @@ export class BudgetsComponent implements OnInit {
       this.splitMode.set(false);
       this.splitSplits.set([{
         categoryId: null,
-        subcategoryId: null,
         amount: transaction.amount,
         useRemaining: false
       }]);
@@ -506,26 +449,33 @@ export class BudgetsComponent implements OnInit {
     // Initialize split mode based on current categories
     if (transaction.categories.length > 1) {
       this.splitMode.set(true);
-      this.splitSplits.set(transaction.categories.map(cat => ({
+      // For split transactions, all but the last get fixed amounts
+      // The last one will automatically use remaining
+      const splits = transaction.categories.map((cat, i) => ({
         categoryId: cat.categoryId,
-        subcategoryId: cat.subcategoryId || null,
         amount: cat.amount,
         useRemaining: false
-      })));
+      }));
+      this.splitSplits.set(splits);
+      // Update the last split to reflect it uses remaining
+      this.updateLastSplitAmount();
     } else if (transaction.categories.length === 1) {
       this.splitMode.set(false);
+      // Use the category amount (which is the portion assigned to this category)
+      // For single category, this should be the absolute value of the transaction amount
+      const categoryAmount = transaction.categories[0].amount;
       this.splitSplits.set([{
         categoryId: transaction.categories[0].categoryId,
-        subcategoryId: null,
-        amount: transaction.amount,
+        amount: categoryAmount,
         useRemaining: false
       }]);
     } else {
       this.splitMode.set(false);
+      // For uncategorized transactions, use the absolute value of the transaction amount
+      const transactionAmount = Math.abs(parseFloat(transaction.amount)).toFixed(2);
       this.splitSplits.set([{
         categoryId: null,
-        subcategoryId: null,
-        amount: transaction.amount,
+        amount: transactionAmount,
         useRemaining: false
       }]);
     }
@@ -542,100 +492,121 @@ export class BudgetsComponent implements OnInit {
     const transaction = this.selectedTransaction();
     if (!transaction) return;
 
-    const currentTotal = this.splitSplits().reduce((sum, split, i) => {
-      if (split.useRemaining) {
-        return sum + this.calculateRemainingAmountInModal(i);
-      }
+    // Calculate current total from all non-last splits (last split uses remaining)
+    const splits = [...this.splitSplits()];
+    const transactionAmount = Math.abs(parseFloat(transaction.amount));
+    
+    // Calculate total from all splits except the last one (if it exists)
+    const nonLastTotal = splits.slice(0, -1).reduce((sum, split) => {
       return sum + parseFloat(split.amount || '0');
     }, 0);
-    const remaining = parseFloat(transaction.amount) - currentTotal;
-
-    this.splitSplits.set([
-      ...this.splitSplits(),
-      {
-        categoryId: null,
-        subcategoryId: null,
-        amount: remaining > 0 ? remaining.toFixed(2) : '0.00',
+    
+    // Update the previous last split to have a fixed amount (half of remaining, or a reasonable default)
+    if (splits.length > 0) {
+      const remainingBeforeNew = transactionAmount - nonLastTotal;
+      const newAmount = (remainingBeforeNew / 2).toFixed(2);
+      splits[splits.length - 1] = {
+        ...splits[splits.length - 1],
+        amount: newAmount,
         useRemaining: false
-      }
-    ]);
+      };
+    }
+
+    // Add new split (will become the last one and use remaining)
+    splits.push({
+      categoryId: null,
+      amount: '0.00', // Will be calculated as remaining
+      useRemaining: false
+    });
+
+    this.splitSplits.set(splits);
+    // Recalculate the last split amount
+    this.updateLastSplitAmount();
   }
 
   removeSplit(index: number) {
     if (this.splitSplits().length <= 1) return;
     const newSplits = this.splitSplits().filter((_, i) => i !== index);
     this.splitSplits.set(newSplits);
+    // After removing, ensure the last split uses remaining
+    this.updateLastSplitAmount();
   }
 
   getSplitTotal(): number {
-    return this.splitSplits().reduce((sum, split, i) => {
-      if (split.useRemaining) {
-        return sum + this.calculateRemainingAmountInModal(i);
-      }
+    const splits = this.splitSplits();
+    if (splits.length === 0) return 0;
+    
+    // Sum all splits except the last one
+    const nonLastTotal = splits.slice(0, -1).reduce((sum, split) => {
       return sum + parseFloat(split.amount || '0');
     }, 0);
+    
+    // Add the last split's remaining amount
+    const lastIndex = splits.length - 1;
+    const lastAmount = this.calculateRemainingAmountInModal(lastIndex);
+    
+    return nonLastTotal + lastAmount;
   }
 
   calculateRemainingAmountInModal(excludeIndex: number): number {
     const transaction = this.selectedTransaction();
     if (!transaction) return 0;
     
-    const transactionTotal = parseFloat(transaction.amount);
+    const transactionAmount = Math.abs(parseFloat(transaction.amount));
     const otherSplitsTotal = this.splitSplits().reduce((sum, split, i) => {
       if (i === excludeIndex) return sum;
-      if (split.useRemaining) return sum; // Don't count other useRemaining splits
+      // Only count non-last splits (last split uses remaining)
+      const isLastSplit = i === this.splitSplits().length - 1;
+      if (isLastSplit) return sum;
       return sum + parseFloat(split.amount || '0');
     }, 0);
     
-    return Math.max(0, transactionTotal - otherSplitsTotal);
+    return Math.max(0, transactionAmount - otherSplitsTotal);
   }
 
-  toggleUseRemainingInModal(index: number) {
+  updateLastSplitAmount() {
     const splits = [...this.splitSplits()];
-    const newValue = !splits[index].useRemaining;
+    if (splits.length === 0) return;
     
-    // Uncheck all other useRemaining checkboxes
-    splits.forEach((split, i) => {
-      if (i === index) {
-        split.useRemaining = newValue;
-        if (newValue) {
-          split.amount = this.calculateRemainingAmountInModal(i).toFixed(2);
-        }
-      } else {
-        split.useRemaining = false;
-      }
-    });
-    
+    const lastIndex = splits.length - 1;
+    const remainingAmount = this.calculateRemainingAmountInModal(lastIndex);
+    splits[lastIndex] = {
+      ...splits[lastIndex],
+      amount: remainingAmount.toFixed(2)
+    };
     this.splitSplits.set(splits);
   }
+
 
   getSplitValidationError(): string | null {
     const transaction = this.selectedTransaction();
     if (!transaction) return null;
 
-    const total = this.getSplitTotal();
-    const transactionAmount = parseFloat(transaction.amount);
-    const difference = Math.abs(total - transactionAmount);
-
-    if (difference > 0.01) {
-      return `Split total (${this.formatCurrency(total)}) must equal transaction amount (${this.formatCurrency(transactionAmount)})`;
+    const transactionAmount = Math.abs(parseFloat(transaction.amount));
+    const splits = this.splitSplits();
+    
+    // Calculate total from all non-last splits
+    const nonLastTotal = splits.slice(0, -1).reduce((sum, split) => {
+      return sum + parseFloat(split.amount || '0');
+    }, 0);
+    
+    // Check if non-last splits exceed transaction amount
+    if (nonLastTotal > transactionAmount) {
+      return `Combined split amounts (${this.formatCurrency(nonLastTotal)}) exceed transaction amount (${this.formatCurrency(transactionAmount)})`;
     }
 
     // Check all splits have categories
-    for (const split of this.splitSplits()) {
+    for (let i = 0; i < splits.length; i++) {
+      const split = splits[i];
       if (!split.categoryId) {
         return 'All splits must have a category selected';
       }
       
-      // Check if category has subcategories and if subcategory is selected
-      if (this.hasSubcategories(split.categoryId)) {
-        if (!split.subcategoryId) {
-          const category = this.categories().find(c => c.id === split.categoryId);
-          return `Please select a subcategory for "${category?.name || 'this category'}"`;
-        }
-      }
+      const isLastSplit = i === splits.length - 1;
+      const amount = isLastSplit 
+        ? this.calculateRemainingAmountInModal(i)
+        : parseFloat(split.amount || '0');
       
-      const amount = split.useRemaining ? this.calculateRemainingAmountInModal(this.splitSplits().indexOf(split)) : parseFloat(split.amount || '0');
       if (amount <= 0) {
         return 'All splits must have an amount greater than 0';
       }
@@ -654,11 +625,15 @@ export class BudgetsComponent implements OnInit {
       return;
     }
 
-    const splits = this.splitSplits().map((split, i) => ({
-      categoryId: split.categoryId!,
-      subcategoryId: split.subcategoryId || null,
-      amount: split.useRemaining ? this.calculateRemainingAmountInModal(i) : parseFloat(split.amount || '0')
-    }));
+    const splits = this.splitSplits().map((split, i) => {
+      const isLastSplit = i === this.splitSplits().length - 1;
+      return {
+        categoryId: split.categoryId!,
+        amount: isLastSplit 
+          ? this.calculateRemainingAmountInModal(i)
+          : parseFloat(split.amount || '0')
+      };
+    });
 
     // Store current transaction count to maintain pagination
     const currentCount = this.transactions().length;
@@ -686,23 +661,18 @@ export class BudgetsComponent implements OnInit {
       return;
     }
 
-    // Check if category has subcategories and if subcategory is selected
-    if (this.hasSubcategories(split.categoryId)) {
-      if (!split.subcategoryId) {
-        const category = this.categories().find(c => c.id === split.categoryId);
-        alert(`Please select a subcategory for "${category?.name || 'this category'}"`);
-        return;
-      }
-    }
-
     // Store current transaction count to maintain pagination
     const currentCount = this.transactions().length;
+
+    // Use the split amount (already positive), or calculate from transaction amount
+    const amountToAssign = split.amount 
+      ? parseFloat(split.amount) 
+      : Math.abs(parseFloat(transaction.amount));
 
     this.transactionService.assignTransactionCategory(
       transaction.id,
       split.categoryId,
-      parseFloat(split.amount || transaction.amount),
-      split.subcategoryId || null
+      amountToAssign
     ).subscribe({
       next: () => {
         this.closeModal();
@@ -725,30 +695,48 @@ export class BudgetsComponent implements OnInit {
     if (this.splitMode()) {
       // Switch to split mode - initialize with current single category or empty
       if (this.splitSplits().length === 1 && this.splitSplits()[0].categoryId) {
-        // Keep the current category as first split
-        this.splitSplits.set([{
-          categoryId: this.splitSplits()[0].categoryId,
-          subcategoryId: this.splitSplits()[0].subcategoryId,
-          amount: this.splitSplits()[0].amount,
-          useRemaining: false
-        }]);
+        // Keep the current category as first split, add a second split that uses remaining
+        const transactionAmount = Math.abs(parseFloat(transaction.amount));
+        const firstAmount = parseFloat(this.splitSplits()[0].amount || '0');
+        const secondAmount = (transactionAmount - firstAmount).toFixed(2);
+        
+        this.splitSplits.set([
+          {
+            categoryId: this.splitSplits()[0].categoryId,
+            amount: this.splitSplits()[0].amount,
+            useRemaining: false
+          },
+          {
+            categoryId: null,
+            amount: secondAmount,
+            useRemaining: false
+          }
+        ]);
+        // Update last split to use remaining
+        this.updateLastSplitAmount();
       } else {
-        // Start fresh
-        this.splitSplits.set([{
-          categoryId: null,
-          subcategoryId: null,
-          amount: transaction.amount,
-          useRemaining: false
-        }]);
+        // Start fresh with two splits
+        const transactionAmount = Math.abs(parseFloat(transaction.amount));
+        this.splitSplits.set([
+          {
+            categoryId: null,
+            amount: (transactionAmount / 2).toFixed(2),
+            useRemaining: false
+          },
+          {
+            categoryId: null,
+            amount: '0.00', // Will be calculated as remaining
+            useRemaining: false
+          }
+        ]);
+        this.updateLastSplitAmount();
       }
     } else {
       // Switch to single mode - combine all splits into one
       const total = this.getSplitTotal();
       const firstCategory = this.splitSplits()[0]?.categoryId || null;
-      const firstSubcategory = this.splitSplits()[0]?.subcategoryId || null;
       this.splitSplits.set([{
         categoryId: firstCategory,
-        subcategoryId: firstSubcategory,
         amount: total.toFixed(2),
         useRemaining: false
       }]);
@@ -768,6 +756,10 @@ export class BudgetsComponent implements OnInit {
   }
 
   startEditingAccountName(account: { accountId: string; name: string; originalName: string; customName?: string | null }) {
+    // Don't allow editing unconnected accounts
+    if (account.accountId.startsWith('unconnected_')) {
+      return;
+    }
     this.editingAccountId.set(account.accountId);
     this.editingAccountName.set(account.customName || account.originalName);
   }
@@ -778,6 +770,10 @@ export class BudgetsComponent implements OnInit {
   }
 
   saveAccountName(accountId: string) {
+    // Don't allow saving unconnected accounts
+    if (accountId.startsWith('unconnected_')) {
+      return;
+    }
     const customName = this.editingAccountName().trim() || null;
     const snapshot = this.balanceSnapshot();
     if (!snapshot) return;
@@ -820,7 +816,7 @@ export class BudgetsComponent implements OnInit {
   }
 
   // Inline editing methods
-  getSplitsForTransaction(transactionId: number): Array<{categoryId: number | null; subcategoryId: number | null; amount: string; useRemaining: boolean}> {
+  getSplitsForTransaction(transactionId: number): Array<{categoryId: number | null; amount: string; useRemaining: boolean}> {
     const transaction = this.transactions().find(t => t.id === transactionId);
     if (!transaction) return [];
 
@@ -836,7 +832,6 @@ export class BudgetsComponent implements OnInit {
     if (transaction.categories.length === 0) {
       return [{
         categoryId: null,
-        subcategoryId: null,
         amount: transaction.amount,
         useRemaining: false
       }];
@@ -844,23 +839,9 @@ export class BudgetsComponent implements OnInit {
 
     return transaction.categories.map(cat => ({
       categoryId: cat.categoryId,
-      subcategoryId: cat.subcategoryId || null,
       amount: cat.amount,
       useRemaining: false
     }));
-  }
-
-  getSubcategoriesForCategory(categoryId: number | null): Array<{id: number; name: string}> {
-    if (!categoryId) return [];
-    // Force reactivity by accessing the categories signal
-    const categories = this.categories();
-    const category = categories.find(c => c.id === categoryId);
-    if (!category || !category.subcategories) return [];
-    return category.subcategories.map(sub => ({ id: sub.id, name: sub.name }));
-  }
-
-  hasSubcategories(categoryId: number | null): boolean {
-    return this.getSubcategoriesForCategory(categoryId).length > 0;
   }
 
   toggleInlineSplitMode(transactionId: number) {
@@ -881,7 +862,6 @@ export class BudgetsComponent implements OnInit {
         const firstCategory = currentSplits[0]?.categoryId || null;
         this.editingSplits().set(transactionId, [{
           categoryId: firstCategory,
-          subcategoryId: currentSplits[0]?.subcategoryId || null,
           amount: total.toFixed(2),
           useRemaining: false
         }]);
@@ -890,7 +870,6 @@ export class BudgetsComponent implements OnInit {
         // Add split mode - split current into two
         const currentSplit = currentSplits[0] || {
           categoryId: null,
-          subcategoryId: null,
           amount: transaction.amount,
           useRemaining: false
         };
@@ -898,13 +877,11 @@ export class BudgetsComponent implements OnInit {
         this.editingSplits().set(transactionId, [
           {
             categoryId: currentSplit.categoryId,
-            subcategoryId: currentSplit.subcategoryId,
             amount: halfAmount,
             useRemaining: false
           },
           {
             categoryId: null,
-            subcategoryId: null,
             amount: halfAmount,
             useRemaining: false
           }
@@ -923,13 +900,11 @@ export class BudgetsComponent implements OnInit {
         this.editingSplits().set(transactionId, [
           {
             categoryId: currentSplit.categoryId,
-            subcategoryId: currentSplit.subcategoryId,
             amount: halfAmount,
             useRemaining: false
           },
           {
             categoryId: null,
-            subcategoryId: null,
             amount: halfAmount,
             useRemaining: false
           }
@@ -951,7 +926,6 @@ export class BudgetsComponent implements OnInit {
     
     currentSplits.push({
       categoryId: null,
-      subcategoryId: null,
       amount: remaining > 0 ? remaining.toFixed(2) : '0.00',
       useRemaining: false
     });
@@ -993,26 +967,13 @@ export class BudgetsComponent implements OnInit {
     
     currentSplits[index] = {
       ...currentSplits[index],
-      categoryId: categoryId,
-      subcategoryId: null // Reset subcategory when category changes
+      categoryId: categoryId
     };
     
     this.editingSplits().set(transactionId, currentSplits);
     this.editingSplits.set(new Map(this.editingSplits()));
   }
 
-  updateSplitSubcategory(transactionId: number, index: number, subcategoryId: number | null) {
-    const currentSplits = this.editingSplits().get(transactionId) || [];
-    if (!currentSplits[index]) return;
-    
-    currentSplits[index] = {
-      ...currentSplits[index],
-      subcategoryId: subcategoryId
-    };
-    
-    this.editingSplits().set(transactionId, currentSplits);
-    this.editingSplits.set(new Map(this.editingSplits()));
-  }
 
   toggleUseRemaining(transactionId: number, index: number) {
     const currentSplits = this.editingSplits().get(transactionId) || [];
@@ -1182,6 +1143,60 @@ export class BudgetsComponent implements OnInit {
     // Reset offset and reload transactions with new filter
     this.transactionsOffset.set(0);
     this.loadTransactions(15, 0);
+  }
+
+  getSavingsCategories(): BudgetCategory[] {
+    return this.categories().filter(cat => cat.categoryType === 'savings');
+  }
+
+  getTotalSavingsAmount(): number {
+    return this.getSavingsCategories().reduce((sum, cat) => {
+      return sum + parseFloat(cat.accumulatedTotal || '0');
+    }, 0);
+  }
+
+  getUnconnectedSavingsAmount(): number {
+    return this.categories()
+      .filter(cat => cat.categoryType === 'savings' && cat.isUnconnectedAccount)
+      .reduce((sum, cat) => {
+        return sum + parseFloat(cat.accumulatedTotal || '0');
+      }, 0);
+  }
+
+  getAdjustedNetBalance(): number {
+    const snapshot = this.balanceSnapshot();
+    if (!snapshot) {
+      return 0;
+    }
+    // Add unconnected savings to net balance
+    const unconnectedSavings = this.getUnconnectedSavingsAmount();
+    return snapshot.netBalance + unconnectedSavings;
+  }
+
+  getAdjustedTotalAssets(): number {
+    const snapshot = this.balanceSnapshot();
+    if (!snapshot) {
+      return 0;
+    }
+    // Add unconnected savings to total assets
+    const unconnectedSavings = this.getUnconnectedSavingsAmount();
+    return snapshot.totalAssets + unconnectedSavings;
+  }
+
+  getNonSavingsMoney(): number {
+    const snapshot = this.balanceSnapshot();
+    if (!snapshot) {
+      return 0;
+    }
+    const totalSavings = this.getTotalSavingsAmount();
+    // Add unconnected savings to net balance for calculation
+    const unconnectedSavings = this.getUnconnectedSavingsAmount();
+    const adjustedNetBalance = snapshot.netBalance + unconnectedSavings;
+    return adjustedNetBalance - totalSavings;
+  }
+
+  getSavingsCategoryAmount(category: BudgetCategory): number {
+    return parseFloat(category.accumulatedTotal || '0');
   }
 }
 

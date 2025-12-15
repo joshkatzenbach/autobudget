@@ -3,13 +3,6 @@
     <div class="header-top">
       <h1>{{ budget()?.name || 'My Budget' }}</h1>
       <div class="header-actions">
-        <app-plaid-link></app-plaid-link>
-        <button class="btn-primary" (click)="syncTransactions()" [disabled]="syncLoading()">
-          {{ syncLoading() ? 'Syncing...' : 'Sync Transactions' }}
-        </button>
-        <button class="btn-primary" routerLink="/budgets/edit">
-          {{ budget() ? 'Edit Budget' : 'Create Budget' }}
-        </button>
         <button class="btn-secondary" (click)="logout()">Logout</button>
       </div>
     </div>
@@ -36,6 +29,12 @@
       </button>
       <button 
         class="tab-button" 
+        [class.active]="activeTab() === 'edit'"
+        (click)="navigateToEditBudget()">
+        Edit Budget
+      </button>
+      <button 
+        class="tab-button" 
         [class.active]="activeTab() === 'test'"
         (click)="activeTab.set('test')">
         Test
@@ -51,6 +50,11 @@
   <!-- Tab Content -->
   @if (activeTab() === 'summary') {
     <div class="tab-content summary-tab">
+      <!-- Connect Account Button -->
+      <div class="summary-actions">
+        <app-plaid-link></app-plaid-link>
+      </div>
+      
       <!-- Balance Snapshot -->
       @if (balanceSnapshot()) {
         <div class="balance-snapshot">
@@ -63,14 +67,24 @@
       <div class="balance-summary">
         <div class="balance-item">
           <span class="balance-label">Net Balance:</span>
-          <span class="balance-amount" [class.positive]="balanceSnapshot()!.netBalance >= 0" [class.negative]="balanceSnapshot()!.netBalance < 0">
-            {{ formatCurrency(balanceSnapshot()!.netBalance) }}
+          <span class="balance-amount" [class.positive]="getAdjustedNetBalance() >= 0" [class.negative]="getAdjustedNetBalance() < 0">
+            {{ formatCurrency(getAdjustedNetBalance()) }}
           </span>
+          @if (getUnconnectedSavingsAmount() > 0) {
+            <small style="display: block; color: #666; font-size: 12px; margin-top: 4px;">
+              (includes {{ formatCurrency(getUnconnectedSavingsAmount()) }} from unconnected accounts)
+            </small>
+          }
         </div>
         <div class="balance-breakdown">
           <div class="breakdown-item">
             <span class="breakdown-label">Total Assets:</span>
-            <span class="breakdown-amount positive">{{ formatCurrency(balanceSnapshot()!.totalAssets) }}</span>
+            <span class="breakdown-amount positive">{{ formatCurrency(getAdjustedTotalAssets()) }}</span>
+            @if (getUnconnectedSavingsAmount() > 0) {
+              <small style="display: block; color: #666; font-size: 12px; margin-top: 4px;">
+                (includes {{ formatCurrency(getUnconnectedSavingsAmount()) }} from unconnected accounts)
+              </small>
+            }
           </div>
           <div class="breakdown-item">
             <span class="breakdown-label">Total Debts:</span>
@@ -115,6 +129,9 @@
                         @if (account.institutionName) {
                           <span class="account-institution">{{ account.institutionName }}</span>
                         }
+                        @if (account.accountId.startsWith('unconnected_')) {
+                          <span class="account-institution" style="color: #999; font-style: italic;">(Unconnected Account)</span>
+                        }
                       </div>
                     </div>
                     <div class="account-balance positive">
@@ -148,7 +165,9 @@
                       } @else {
                         <div class="account-name-container">
                           <div class="account-name">{{ account.name }}</div>
-                          <button class="btn-icon btn-edit" (click)="startEditingAccountName(account)" title="Edit name">✎</button>
+                          @if (!account.accountId.startsWith('unconnected_')) {
+                            <button class="btn-icon btn-edit" (click)="startEditingAccountName(account)" title="Edit name">✎</button>
+                          }
                         </div>
                       }
                       <div class="account-meta">
@@ -158,6 +177,9 @@
                         }
                         @if (account.institutionName) {
                           <span class="account-institution">{{ account.institutionName }}</span>
+                        }
+                        @if (account.accountId.startsWith('unconnected_')) {
+                          <span class="account-institution" style="color: #999; font-style: italic;">(Unconnected Account)</span>
                         }
                       </div>
                     </div>
@@ -190,16 +212,56 @@
         </div>
       } @else {
         <div class="budget-summary">
-          <div class="budget-details">
-            <div class="detail">
-              <span class="label">Period:</span>
-              <span>{{ formatDate(budget()!.startDate) }} - {{ formatDate(budget()!.endDate) }}</span>
+          <!-- Money Breakdown -->
+          @if (balanceSnapshot()) {
+            <div class="money-breakdown">
+              <h3>Money Breakdown</h3>
+              
+              <!-- Total Net Balance -->
+              <div class="breakdown-total">
+                <span class="total-label">Total Net Balance:</span>
+                <span class="total-amount" [class.positive]="getAdjustedNetBalance() >= 0" [class.negative]="getAdjustedNetBalance() < 0">
+                  {{ formatCurrency(getAdjustedNetBalance()) }}
+                </span>
+                @if (getUnconnectedSavingsAmount() > 0) {
+                  <small class="breakdown-help-text" style="display: block; margin-top: 4px;">
+                    Includes {{ formatCurrency(getUnconnectedSavingsAmount()) }} from unconnected accounts
+                  </small>
+                }
+              </div>
+
+              <!-- Savings Categories -->
+              <div class="breakdown-list">
+                <h4>Savings Categories</h4>
+                @for (savingsCat of getSavingsCategories(); track savingsCat.id) {
+                  <div class="breakdown-item">
+                    <div class="breakdown-item-header">
+                      <span class="color-indicator" [style.background-color]="savingsCat.color || '#667eea'"></span>
+                      <span class="breakdown-item-name">{{ savingsCat.name }}</span>
+                    </div>
+                    <span class="breakdown-item-amount">{{ formatCurrency(getSavingsCategoryAmount(savingsCat)) }}</span>
+                  </div>
+                }
+                @if (getSavingsCategories().length === 0) {
+                  <p class="no-savings">No savings categories</p>
+                }
+              </div>
+              
+              <!-- Non-Savings Money -->
+              <div class="breakdown-list">
+                <h4>Available for Spending</h4>
+                <div class="breakdown-item highlight">
+                  <div class="breakdown-item-header">
+                    <span class="breakdown-item-name">Non-Savings Money</span>
+                  </div>
+                  <span class="breakdown-item-amount">{{ formatCurrency(getNonSavingsMoney()) }}</span>
+                </div>
+                  <small class="breakdown-help-text">
+                    Adjusted Net Balance ({{ formatCurrency(getAdjustedNetBalance()) }}) - Total Savings ({{ formatCurrency(getTotalSavingsAmount()) }})
+                  </small>
+              </div>
             </div>
-            <div class="detail">
-              <span class="label">Income:</span>
-              <span class="amount">{{ formatCurrency(budget()!.income) }}</span>
-            </div>
-          </div>
+          }
         </div>
       }
     </div>
@@ -207,17 +269,36 @@
 
   @if (activeTab() === 'transactions') {
     <div class="tab-content transactions-tab">
+      <!-- Sync Transactions Button -->
+      <div class="transactions-actions">
+        <button class="btn-primary" (click)="syncTransactions()" [disabled]="syncLoading()">
+          {{ syncLoading() ? 'Syncing...' : 'Sync Transactions' }}
+        </button>
+      </div>
+      
       <!-- Recent Transactions -->
       <div class="transactions-section">
         <div class="transactions-header">
           <h2>Recent Transactions</h2>
-          <div class="review-filter">
-            <label>Filter:</label>
-            <select [(ngModel)]="reviewedFilter" (change)="onReviewFilterChange()">
-              <option value="all">All</option>
-              <option value="reviewed">Reviewed</option>
-              <option value="unreviewed">Unreviewed</option>
-            </select>
+          <div class="filters">
+            <div class="review-filter">
+              <label>Filter:</label>
+              <select [ngModel]="reviewedFilter()" (ngModelChange)="reviewedFilter.set($event); onReviewFilterChange()">
+                <option value="all">All</option>
+                <option value="reviewed">Reviewed</option>
+                <option value="unreviewed">Unreviewed</option>
+              </select>
+            </div>
+            <div class="fixed-filter">
+              <label class="checkbox-label">
+                <input 
+                  type="checkbox" 
+                  [checked]="showHiddenFixed()"
+                  (change)="showHiddenFixed.set($any($event.target).checked); onReviewFilterChange()"
+                />
+                <span>Show Fixed category transactions</span>
+              </label>
+            </div>
           </div>
         </div>
         @if (transactionsLoading() && transactions().length === 0) {
@@ -227,7 +308,7 @@
         } @else if (transactions().length === 0) {
           <div class="no-transactions">
             <p>No transactions found.</p>
-            <p>Click "Sync Transactions" to fetch transactions from your connected accounts.</p>
+            <p>Click "Sync Transactions" above to fetch transactions from your connected accounts.</p>
           </div>
         } @else {
           <div class="transactions-table">
@@ -276,22 +357,6 @@
                                 <option [ngValue]="category.id">{{ category.name }}</option>
                               }
                             </select>
-                            
-                            <!-- Subcategory Dropdown -->
-                            @if (cat.categoryId && getSubcategoriesForCategory(cat.categoryId).length > 0) {
-                              <select 
-                                class="subcategory-dropdown"
-                                [ngModel]="cat.subcategoryId"
-                                (ngModelChange)="quickChangeSubcategory(transaction.id, i, $event === null ? null : +$event)"
-                                (click)="$event.stopPropagation()">
-                                <option [ngValue]="null">No subcategory</option>
-                                @for (subcat of getSubcategoriesForCategory(cat.categoryId); track subcat.id) {
-                                  <option [ngValue]="subcat.id">{{ subcat.name }}</option>
-                                }
-                              </select>
-                            } @else {
-                              <span></span>
-                            }
                           </div>
                         }
                         @if (transaction.categories.length === 0) {
@@ -334,6 +399,7 @@
       </div>
     </div>
   }
+
 
   @if (activeTab() === 'analytics') {
     <div class="tab-content analytics-tab">
@@ -419,27 +485,14 @@
                 <label>
                   Category:
                   <select 
-                    [value]="splitSplits()[0]?.categoryId || null"
-                    (change)="onCategoryChangeInModal(0, $any($event.target).value === 'null' ? null : +$any($event.target).value)">
-                    <option [value]="null">Select category...</option>
+                    [ngModel]="splitSplits()[0]?.categoryId || null"
+                    (ngModelChange)="onCategoryChangeInModal(0, $event === null ? null : +$event)">
+                    <option [ngValue]="null">Select category...</option>
                     @for (category of categories(); track category.id) {
-                      <option [value]="category.id">{{ category.name }}</option>
+                      <option [ngValue]="category.id">{{ category.name }}</option>
                     }
                   </select>
                 </label>
-                @if (splitSplits()[0]?.categoryId && hasSubcategories(splitSplits()[0].categoryId)) {
-                  <label>
-                    Subcategory:
-                    <select 
-                      [value]="splitSplits()[0]?.subcategoryId || null"
-                      (change)="onSubcategoryChangeInModal(0, $any($event.target).value === 'null' ? null : +$any($event.target).value)">
-                      <option [value]="null">No subcategory</option>
-                      @for (subcat of getSubcategoriesForCategory(splitSplits()[0].categoryId); track subcat.id) {
-                        <option [value]="subcat.id">{{ subcat.name }}</option>
-                      }
-                    </select>
-                  </label>
-                }
                 <button class="btn-primary" (click)="saveSingleCategory()">Save</button>
               </div>
             } @else {
@@ -447,6 +500,7 @@
               <div class="split-form">
                 <div class="splits-list">
                   @for (split of splitSplits(); track $index; let i = $index) {
+                    @let isLastSplit = i === splitSplits().length - 1;
                     <div class="split-row">
                       <button 
                         class="btn-small btn-danger remove-split-btn" 
@@ -458,40 +512,24 @@
                       <input 
                         type="number" 
                         step="0.01"
-                        [ngModel]="splitSplits()[i].useRemaining ? calculateRemainingAmountInModal(i).toFixed(2) : splitSplits()[i].amount"
+                        [ngModel]="isLastSplit ? calculateRemainingAmountInModal(i).toFixed(2) : splitSplits()[i].amount"
                         (ngModelChange)="onAmountChangeInModal(i, $event)"
                         placeholder="Amount"
                         class="split-amount-input"
-                        [readonly]="splitSplits()[i].useRemaining">
+                        [readonly]="isLastSplit"
+                        [title]="isLastSplit ? 'The rest of the money will be used for this split' : ''">
                       <select 
-                        [value]="splitSplits()[i]?.categoryId || null"
-                        (change)="onCategoryChangeInModal(i, $any($event.target).value === 'null' ? null : +$any($event.target).value)"
+                        [ngModel]="splitSplits()[i]?.categoryId || null"
+                        (ngModelChange)="onCategoryChangeInModal(i, $event === null ? null : +$event)"
                         class="split-category-select">
-                        <option [value]="null">Select category...</option>
+                        <option [ngValue]="null">Select category...</option>
                         @for (category of categories(); track category.id) {
-                          <option [value]="category.id">{{ category.name }}</option>
+                          <option [ngValue]="category.id">{{ category.name }}</option>
                         }
                       </select>
-                      @if (splitSplits()[i]?.categoryId && hasSubcategories(splitSplits()[i].categoryId)) {
-                        <select 
-                          [value]="splitSplits()[i]?.subcategoryId || null"
-                          (change)="onSubcategoryChangeInModal(i, $any($event.target).value === 'null' ? null : +$any($event.target).value)"
-                          class="split-subcategory-select">
-                          <option [value]="null">No subcategory</option>
-                          @for (subcat of getSubcategoriesForCategory(splitSplits()[i].categoryId); track subcat.id) {
-                            <option [value]="subcat.id">{{ subcat.name }}</option>
-                          }
-                        </select>
-                      } @else {
-                        <span></span>
+                      @if (isLastSplit) {
+                        <span class="use-remaining-label">Uses remaining</span>
                       }
-                      <label class="use-remaining-checkbox">
-                        <input 
-                          type="checkbox"
-                          [checked]="splitSplits()[i].useRemaining"
-                          (change)="toggleUseRemainingInModal(i)">
-                        <span>Use remaining</span>
-                      </label>
                     </div>
                   }
                 </div>

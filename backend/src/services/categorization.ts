@@ -31,7 +31,6 @@ export interface CategorizeTransactionParams {
 
 export interface CategorizeTransactionResult {
   categoryId: number | null;
-  subcategoryId: number | null;
 }
 
 /**
@@ -89,7 +88,7 @@ export async function categorizeTransaction(params: CategorizeTransactionParams)
   if (!budgetId) {
     const budget = await getUserBudget(userId);
     if (!budget) {
-      return { categoryId: null, subcategoryId: null }; // No budget exists
+      return { categoryId: null }; // No budget exists
     }
     budgetId = budget.id;
   }
@@ -97,86 +96,85 @@ export async function categorizeTransaction(params: CategorizeTransactionParams)
   // Get available budget categories
   const allCategories = await getBudgetCategories(userId);
   if (!allCategories || allCategories.length === 0) {
-    return { categoryId: null, subcategoryId: null };
+    return { categoryId: null };
   }
 
   // Filter out Surplus category - it should not be used for regular spending transactions
   const categories = allCategories.filter(cat => cat.categoryType !== 'surplus');
   if (categories.length === 0) {
-    return { categoryId: null, subcategoryId: null }; // No valid categories available
+    return { categoryId: null }; // No valid categories available
   }
 
   // Check if this is a transfer transaction - if so, return Excluded category
-  if (detectTransferTransaction(merchantName, plaidCategory, transactionName)) {
+  if (detectTransferTransaction(merchantName ?? null, plaidCategory, transactionName ?? null)) {
     const excludedCategory = categories.find(cat => cat.categoryType === 'excluded');
     if (excludedCategory) {
-      return { categoryId: excludedCategory.id, subcategoryId: null };
+      return { categoryId: excludedCategory.id };
     }
   }
 
-  // Get merchant history (last 3 transactions)
-  const merchantHistory = merchantName ? await getMerchantHistory(userId, merchantName, 3) : [];
+  // Get merchant history (last 5 transactions)
+  const merchantHistory = (merchantName ?? null) ? await getMerchantHistory(userId, merchantName ?? null, 5) : [];
 
-  // Get user's category overrides (we'll add this later, for now empty array)
-  const userOverrides: any[] = []; // TODO: Get from transactionCategoryOverrides
-
-  // Format merchant history for prompt (including subcategories)
+  // Format merchant history for prompt
   const historyText = merchantHistory.length > 0
     ? merchantHistory.map((tx, idx) => {
-        const categoryInfo = tx.categories.map(c => {
-          if (c.subcategoryName) {
-            return `${c.categoryName} > ${c.subcategoryName}`;
-          }
-          return c.categoryName;
-        }).join(', ');
+        const categoryInfo = tx.categories.map(c => c.categoryName).join(', ');
         return `  - Transaction ${idx + 1}: $${tx.amount} on ${tx.date} → Category: "${categoryInfo}"`;
       }).join('\n')
     : '  (No history available)';
 
-  // Format categories for prompt (excluding Surplus), including subcategories
+  // Get Fixed categories with expected merchant names
+  const fixedCategoriesWithMerchants = categories.filter(cat => 
+    cat.categoryType === 'fixed' && cat.expectedMerchantName
+  );
+
+  // Check if current merchant matches any Fixed category
+  const matchingFixedCategory = merchantName 
+    ? fixedCategoriesWithMerchants.find(cat => 
+        cat.expectedMerchantName && 
+        merchantName.toLowerCase().includes(cat.expectedMerchantName.toLowerCase())
+      )
+    : null;
+
+  // Format categories for prompt (excluding Surplus)
   const categoriesText = categories.map(cat => {
-    let categoryLine = `  - ID: ${cat.id}, Name: "${cat.name}"${cat.categoryType === 'excluded' ? ' (for transfers/payments)' : ''}`;
-    
-    // Add subcategories if they exist
-    if (cat.subcategories && cat.subcategories.length > 0) {
-      const subcategoriesList = cat.subcategories.map(sub => `    - Subcategory ID: ${sub.id}, Name: "${sub.name}"`).join('\n');
-      categoryLine += `\n    Subcategories:\n${subcategoriesList}`;
+    let description = '';
+    if (cat.categoryType === 'excluded') {
+      description = ' (for transfers/payments)';
+    } else if (cat.categoryType === 'fixed' && cat.expectedMerchantName) {
+      description = ` (Fixed bill - expected merchant: "${cat.expectedMerchantName}")`;
     }
-    
-    return categoryLine;
+    return `  - ID: ${cat.id}, Name: "${cat.name}"${description}`;
   }).join('\n');
 
-  // Format overrides for prompt
-  const overridesText = userOverrides.length > 0
-    ? userOverrides.map(ov => `  - Merchant: "${ov.merchantName}" → Category: "${ov.categoryId}"`).join('\n')
-    : '  (No overrides)';
+  // Add Fixed category matching information
+  const fixedCategoryMatchText = matchingFixedCategory
+    ? `\n\nIMPORTANT: This merchant "${merchantName}" matches the expected merchant "${matchingFixedCategory.expectedMerchantName}" for the Fixed category "${matchingFixedCategory.name}" (ID: ${matchingFixedCategory.id}). This should be prioritized for categorization.`
+    : '';
 
   const prompt = `You are a financial transaction categorizer. Given:
 - Current Transaction:
   - Amount: $${amount.toFixed(2)}
   - Merchant: "${merchantName || 'Unknown'}"
   - Plaid Category: ${plaidCategory ? JSON.stringify(plaidCategory) : 'null'}
-- Historical Transactions from Same Merchant (last 3):
+- Historical Transactions from Same Merchant (last 5):
 ${historyText}
-- User's manual overrides:
-${overridesText}
 - Available budget categories:
-${categoriesText}
+${categoriesText}${fixedCategoryMatchText}
 
 IMPORTANT RULES:
 1. If this transaction is a transfer between accounts, credit card payment, or similar internal money movement, use the "Excluded" category (it will be in the list above with categoryType 'excluded').
 2. DO NOT use "Surplus" category unless this is truly surplus income (like a bonus or unexpected income). Surplus is for leftover money after all expenses, not for regular spending transactions.
-3. Choose the most appropriate spending category based on the merchant, amount, and Plaid category.
-4. If the selected category has subcategories, you MUST also select the most appropriate subcategory. If the category has no subcategories, return null for subcategoryId.
+3. If a Fixed category has an expected merchant name that matches this transaction's merchant, prioritize that Fixed category.
+4. Choose the most appropriate spending category based on the merchant, amount, and Plaid category.
 
 Based on the historical pattern and available categories, return a JSON object with:
 - categoryId: the budget category ID (number or null)
-- subcategoryId: the subcategory ID if the category has subcategories, otherwise null
 
 Example responses:
-- Category with subcategories: {"categoryId": 5, "subcategoryId": 12}
-- Category without subcategories: {"categoryId": 5, "subcategoryId": null}
-- No match: {"categoryId": null, "subcategoryId": null}
+- Category match: {"categoryId": 5}
+- No match: {"categoryId": null}
 
 Return ONLY the JSON object, nothing else.`;
 
@@ -187,7 +185,7 @@ Return ONLY the JSON object, nothing else.`;
       messages: [
         {
           role: 'system',
-          content: 'You are a financial transaction categorizer. Return only a JSON object with categoryId and subcategoryId.',
+          content: 'You are a financial transaction categorizer. Return only a JSON object with categoryId.',
         },
         {
           role: 'user',
@@ -201,7 +199,7 @@ Return ONLY the JSON object, nothing else.`;
 
     const response = completion.choices[0]?.message?.content?.trim();
     if (!response) {
-      return { categoryId: null, subcategoryId: null };
+      return { categoryId: null };
     }
 
     try {
@@ -209,40 +207,23 @@ Return ONLY the JSON object, nothing else.`;
       const categoryId = result.categoryId !== null && result.categoryId !== undefined 
         ? parseInt(String(result.categoryId), 10) 
         : null;
-      const subcategoryId = result.subcategoryId !== null && result.subcategoryId !== undefined
-        ? parseInt(String(result.subcategoryId), 10)
-        : null;
 
       // Verify category exists in budget
       if (categoryId !== null) {
         const category = categories.find(cat => cat.id === categoryId);
         if (!category) {
-          return { categoryId: null, subcategoryId: null };
-        }
-
-        // Verify subcategory exists and belongs to the category
-        if (subcategoryId !== null) {
-          const subcategory = category.subcategories?.find(sub => sub.id === subcategoryId);
-          if (!subcategory) {
-            // If category has subcategories but the selected one doesn't exist, return null for subcategory
-            // The category will still be assigned, but without a subcategory
-            return { categoryId, subcategoryId: null };
-          }
-        } else if (category.subcategories && category.subcategories.length > 0) {
-          // Category has subcategories but LLM didn't select one - return null for both
-          // This will require manual selection
-          return { categoryId: null, subcategoryId: null };
+          return { categoryId: null };
         }
       }
 
-      return { categoryId, subcategoryId };
+      return { categoryId };
     } catch (parseError) {
       console.error('Error parsing LLM response:', parseError);
-      return { categoryId: null, subcategoryId: null };
+      return { categoryId: null };
     }
   } catch (error) {
     console.error('Error categorizing transaction with OpenAI:', error);
-    return { categoryId: null, subcategoryId: null };
+    return { categoryId: null };
   }
 }
 

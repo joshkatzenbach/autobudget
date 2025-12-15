@@ -7,9 +7,9 @@ import { exchangeCodeForToken, storeOAuthTokens, getUserAccessToken, getUserOAut
 import { storeMessage, processIncomingMessage, updateMessageStatus } from '../services/slack-messages';
 import { assignTransactionCategory, updateTransactionCategories } from '../services/transactions';
 import { getBudgetCategories } from '../services/budgets';
-import { budgetCategories, budgetCategorySubcategories } from '../db/schema';
+import { budgetCategories } from '../db/schema';
 import { db } from '../db';
-import { slackMessages, plaidTransactions } from '../db/schema';
+import { slackMessages, plaidTransactions, slackOAuth } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
 import * as dotenv from 'dotenv';
 
@@ -365,25 +365,13 @@ router.post('/interactive',
           // Build category options for dropdown
           const categoryOptions: any[] = [];
           for (const cat of categories) {
-            if (cat.subcategories && cat.subcategories.length > 0) {
-              for (const subcat of cat.subcategories) {
-                categoryOptions.push({
-                  text: {
-                    type: 'plain_text',
-                    text: `${cat.name} - ${subcat.name}`
-                  },
-                  value: `cat_${cat.id}_sub_${subcat.id}`
-                });
-              }
-            } else {
-              categoryOptions.push({
-                text: {
-                  type: 'plain_text',
-                  text: cat.name
-                },
-                value: `cat_${cat.id}`
-              });
-            }
+            categoryOptions.push({
+              text: {
+                type: 'plain_text',
+                text: cat.name
+              },
+              value: `cat_${cat.id}`
+            });
           }
 
           // Build split blocks - last split doesn't have amount field
@@ -454,7 +442,7 @@ router.post('/interactive',
                       // Open the actual split modal
                       // Preserve messageInfo from the first modal
                       const splitModal = {
-                        type: 'modal',
+                        type: 'modal' as const,
                         callback_id: `split_transaction_${transactionId}`,
                         private_metadata: JSON.stringify({ 
                           numSplits, 
@@ -462,19 +450,19 @@ router.post('/interactive',
                           messageInfo: metadata?.messageInfo || null // Preserve message info
                         }),
                         title: {
-                          type: 'plain_text',
+                          type: 'plain_text' as const,
                           text: 'Split Transaction'
                         },
                         submit: {
-                          type: 'plain_text',
+                          type: 'plain_text' as const,
                           text: 'Save Split'
                         },
                         close: {
-                          type: 'plain_text',
+                          type: 'plain_text' as const,
                           text: 'Cancel'
                         },
                         blocks: blocks
-                      };
+                      } as any;
 
           const slackClient = createSlackClient(accessToken);
           await slackClient.views.update({
@@ -517,7 +505,7 @@ router.post('/interactive',
           });
 
           // Parse splits from view state
-          const splits: Array<{ categoryId: number; subcategoryId: number | null; amount: string }> = [];
+          const splits: Array<{ categoryId: number; amount: string }> = [];
           const transactionAmount = Math.abs(parseFloat(transaction.amount));
           let totalAmount = 0;
 
@@ -561,13 +549,9 @@ router.post('/interactive',
 
             const categoryValue = categoryBlock.category.selected_option.value;
             const categoryId = parseInt(categoryValue.split('_')[1], 10);
-            const subcategoryId = categoryValue.includes('_sub_') 
-              ? parseInt(categoryValue.split('_sub_')[1], 10) 
-              : null;
 
             console.log(`[DEBUG] Split ${i} - categoryValue:`, categoryValue);
             console.log(`[DEBUG] Split ${i} - categoryId:`, categoryId);
-            console.log(`[DEBUG] Split ${i} - subcategoryId:`, subcategoryId);
 
             const isLastSplit = i === numSplits;
             console.log(`[DEBUG] Split ${i} - isLastSplit:`, isLastSplit);
@@ -591,7 +575,6 @@ router.post('/interactive',
               }
               splits.push({
                 categoryId,
-                subcategoryId,
                 amount: remainingAmount.toFixed(2)
               });
               console.log(`[DEBUG] Split ${i} (last) - Added split with amount:`, remainingAmount.toFixed(2));
@@ -646,7 +629,6 @@ router.post('/interactive',
 
               splits.push({
                 categoryId,
-                subcategoryId,
                 amount: amount.toFixed(2)
               });
               console.log(`[DEBUG] Split ${i} - Added split with amount:`, amount.toFixed(2));
@@ -676,7 +658,6 @@ router.post('/interactive',
                 transactionId,
                 splits: splits.map(s => ({
                   categoryId: s.categoryId,
-                  subcategoryId: s.subcategoryId,
                   amount: s.amount
                 }))
               });
@@ -684,14 +665,13 @@ router.post('/interactive',
                 transactionId,
                 splits.map(s => ({
                   categoryId: s.categoryId,
-                  subcategoryId: s.subcategoryId,
                   amount: s.amount
                 })),
                 true // Manual
               );
               console.log('[DEBUG] Successfully updated transaction categories');
 
-              // Fetch category and subcategory names for each split
+              // Fetch category names for each split
               const splitsWithNames = await Promise.all(
                 splits.map(async (split) => {
                   const [category] = await db
@@ -700,19 +680,8 @@ router.post('/interactive',
                     .where(eq(budgetCategories.id, split.categoryId))
                     .limit(1);
 
-                  let subcategoryName: string | null = null;
-                  if (split.subcategoryId) {
-                    const [subcategory] = await db
-                      .select({ name: budgetCategorySubcategories.name })
-                      .from(budgetCategorySubcategories)
-                      .where(eq(budgetCategorySubcategories.id, split.subcategoryId))
-                      .limit(1);
-                    subcategoryName = subcategory?.name || null;
-                  }
-
                   return {
                     categoryName: category?.name || 'Unknown',
-                    subcategoryName,
                     amount: split.amount
                   };
                 })
@@ -756,25 +725,21 @@ router.post('/interactive',
                 
                 // Build split details text
                 const splitDetails = splitsWithNames.map((split, index) => {
-                  const categoryDisplay = split.subcategoryName 
-                    ? `${split.categoryName} - ${split.subcategoryName}`
-                    : split.categoryName;
-                  return `• ${categoryDisplay}: $${parseFloat(split.amount).toFixed(2)}`;
+                  return `• ${split.categoryName}: $${parseFloat(split.amount).toFixed(2)}`;
                 }).join('\n');
                 
                 // Add confirmation message as a new section block with split details
                 updatedBlocks.push({
-                  type: 'section',
+                  type: 'section' as const,
                   text: {
-                    type: 'mrkdwn',
+                    type: 'mrkdwn' as const,
                     text: `✓ *Transaction split into ${splits.length} categories:*\n${splitDetails}`
                   }
-                });
+                } as any);
                 
                 // Update fallback text for push notifications
                 const splitSummary = splitsWithNames.map(s => {
-                  const catName = s.subcategoryName ? `${s.categoryName} - ${s.subcategoryName}` : s.categoryName;
-                  return `${catName} ($${parseFloat(s.amount).toFixed(2)})`;
+                  return `${s.categoryName} ($${parseFloat(s.amount).toFixed(2)})`;
                 }).join(', ');
                 const updatedText = `${currentMessage.text || 'Transaction'}\n✓ Transaction split: ${splitSummary}`;
                 
@@ -788,7 +753,7 @@ router.post('/interactive',
                   channel: messageInfo.channel,
                   ts: messageInfo.ts,
                   text: updatedText,
-                  blocks: updatedBlocks
+                  blocks: updatedBlocks as any
                 });
                 console.log('[DEBUG] Slack message updated successfully - buttons removed');
               } else {
@@ -900,14 +865,71 @@ router.post('/interactive',
                   console.error(`Error marking transaction ${transactionId} as reviewed:`, error);
                 }
               }
+              } else if (action.action_id === 'variable_surplus_move' || action.action_id === 'variable_deficit_move') {
+                // Handle Variable category surplus/deficit movement
+                // value format: move_{surplus|deficit}_{variableCategoryId}_{targetCategoryId}_{year}_{month}_{amount}
+                const valueParts = action.value?.split('_') || [];
+                if (valueParts.length >= 7) {
+                  const movementType = valueParts[1] as 'surplus' | 'deficit';
+                  const variableCategoryId = parseInt(valueParts[2]);
+                  const targetCategoryId = parseInt(valueParts[3]);
+                  const year = parseInt(valueParts[4]);
+                  const month = parseInt(valueParts[5]);
+                  const amount = parseFloat(valueParts[6]);
+
+                  if (!isNaN(variableCategoryId) && !isNaN(targetCategoryId) && !isNaN(amount)) {
+                    // Get userId from Slack user ID via OAuth
+                    const [oauth] = await db
+                      .select()
+                      .from(slackOAuth)
+                      .where(eq(slackOAuth.botUserId, payload.user.id))
+                      .limit(1);
+
+                    if (oauth) {
+                      const { processVariableMovement } = await import('../services/month-end');
+                      await processVariableMovement(
+                        oauth.userId,
+                        variableCategoryId,
+                        targetCategoryId,
+                        movementType,
+                        amount,
+                        year,
+                        month
+                      );
+
+                      // Update message to show confirmation
+                      const accessToken = await getUserAccessToken(oauth.userId);
+                      if (accessToken && payload.message) {
+                        const slackClient = createSlackClient(accessToken);
+                        const updatedText = movementType === 'surplus'
+                          ? `✅ Surplus of $${amount.toFixed(2)} moved to selected category.`
+                          : `✅ Deficit of $${amount.toFixed(2)} covered from selected category.`;
+
+                        await slackClient.chat.update({
+                          channel: payload.channel?.id || payload.message.channel,
+                          ts: payload.message.ts,
+                          text: updatedText,
+                          blocks: [
+                            {
+                              type: 'section',
+                              text: {
+                                type: 'mrkdwn',
+                                text: updatedText
+                              }
+                            }
+                          ] as any
+                        });
+                      }
+                    }
+                  }
+                }
               } else if (action.action_id?.startsWith('transaction_category_')) {
-                // User clicked a category or subcategory button
-                // action_id format: transaction_category_${categoryId} or transaction_category_${categoryId}_${subcategoryId}
-                // value format: category_${transactionId}_${categoryId} or category_${transactionId}_${categoryId}_${subcategoryId}
+                // User clicked a category button
+                // action_id format: transaction_category_${categoryId}
+                // value format: category_${transactionId}_${categoryId}
                 const valueParts = action.value.split('_');
                 const transactionId = parseInt(valueParts[1], 10);
                 const categoryId = parseInt(valueParts[2], 10);
-                const subcategoryId = valueParts.length > 3 ? parseInt(valueParts[3], 10) : null;
                 
                 if (isNaN(transactionId) || isNaN(categoryId)) {
                   console.error('Invalid transaction or category ID in button click');
@@ -935,8 +957,7 @@ router.post('/interactive',
                     transactionId,
                     categoryId,
                     transaction.amount,
-                    true, // Manual override
-                    subcategoryId || null // Use subcategory if provided
+                    true // Manual override
                   );
 
                   // Update the Slack message to show it was updated and remove buttons
@@ -1011,51 +1032,51 @@ router.post('/interactive',
                 // Open first modal asking for number of splits
                 const transactionAmount = Math.abs(parseFloat(transaction.amount));
                 const numSplitsModal = {
-                  type: 'modal',
+                  type: 'modal' as const,
                   callback_id: `num_splits_${transactionId}`,
                   private_metadata: JSON.stringify({
                     transactionId,
                     messageInfo // Store message channel and timestamp
                   }),
                   title: {
-                    type: 'plain_text',
+                    type: 'plain_text' as const,
                     text: 'Split Transaction'
                   },
                   submit: {
-                    type: 'plain_text',
+                    type: 'plain_text' as const,
                     text: 'Continue'
                   },
                   close: {
-                    type: 'plain_text',
+                    type: 'plain_text' as const,
                     text: 'Cancel'
                   },
                   blocks: [
                     {
-                      type: 'section',
+                      type: 'section' as const,
                       text: {
-                        type: 'mrkdwn',
+                        type: 'mrkdwn' as const,
                         text: `*Transaction Amount:* $${transactionAmount.toFixed(2)}\n\nHow many ways would you like to split this transaction?`
                       }
                     },
                     {
-                      type: 'input',
+                      type: 'input' as const,
                       block_id: 'num_splits',
                       label: {
-                        type: 'plain_text',
+                        type: 'plain_text' as const,
                         text: 'Number of Splits'
                       },
                       element: {
-                        type: 'plain_text_input',
+                        type: 'plain_text_input' as const,
                         action_id: 'num_splits_input',
                         placeholder: {
-                          type: 'plain_text',
+                          type: 'plain_text' as const,
                           text: 'e.g., 2, 3, 4...'
                         },
                         initial_value: '2'
                       }
                     }
                   ]
-                };
+                } as any;
 
                 const slackClient = createSlackClient(accessToken);
                 await slackClient.views.open({
