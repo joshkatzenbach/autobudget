@@ -51,21 +51,30 @@ Replace `YOUR_USERNAME` with your GitHub username.
 4. Choose your `autobudget` repository
 5. Railway will detect the repository and create a service
 
-### 2.1.1 Configure Service Root Directory
+### 2.1.1 Configure Service Root Directory ⚠️ CRITICAL STEP
 
-**Important**: Since this is a monorepo, you need to set the root directory:
+**This step is REQUIRED - Railway will fail without it!**
 
-1. In your Railway project, click on the service
-2. Go to **Settings** tab
-3. Set **Root Directory** to: `/backend`
-4. This tells Railway to build from the `backend` directory
-5. Railway will automatically detect `backend/railway.toml` and use Railpack
+Since this is a monorepo, you **MUST** set the root directory before Railway can build:
 
-**Railpack will automatically:**
-- Detect Node.js 20 from `backend/package.json` engines field or `.nvmrc`
+1. In your Railway project, click on the service that was just created
+2. Go to the **Settings** tab (gear icon)
+3. Scroll down to **Root Directory**
+4. Click the input field and set it to: `/backend`
+5. Click **Save** or press Enter
+6. Railway will now use `backend/railway.toml` and look for `backend/package.json`
+
+**Why this is needed:**
+- Railpack needs to see `package.json` directly in the root directory it's building from
+- Without setting root directory, Railway looks at the repo root and finds the wrong `package.json`
+- The error "No start command was found" means it's looking at the root `package.json` instead of `backend/package.json`
+
+**After setting root directory, Railpack will automatically:**
+- Detect Node.js 20 from `backend/package.json` engines field (`"node": ">=20.19.0"`)
+- Or from `.nvmrc` file in backend directory
 - Run `npm install` in the backend directory
-- Run `npm run build` (from package.json scripts)
-- Use `npm start` to start the service
+- Run `npm run build` (from backend/package.json scripts)
+- Use `npm start` to start the service (from backend/package.json)
 
 ### 2.2 Configure Environment Variables
 
