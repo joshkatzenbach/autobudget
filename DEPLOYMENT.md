@@ -49,7 +49,11 @@ Replace `YOUR_USERNAME` with your GitHub username.
 2. Click "New Project"
 3. Select "Deploy from GitHub repo"
 4. Choose your `autobudget` repository
-5. Railway will detect the `railway.toml` file and configure the build
+5. Railway will detect the `railway.toml` and `nixpacks.toml` files and configure the build
+6. **Important**: Railway should auto-detect Node.js 20 from the `.nvmrc` file. If it doesn't:
+   - Go to your service settings
+   - Add environment variable: `NODE_VERSION=20`
+   - Or manually set the Node.js version in Railway's service settings
 
 ### 2.2 Configure Environment Variables
 
@@ -57,6 +61,7 @@ In your Railway project, go to **Variables** and add:
 
 ```
 NODE_ENV=production
+NODE_VERSION=20
 PORT=3000
 DATABASE_URL=<Railway will auto-provision this>
 SESSION_SECRET=<generate a secure random string>

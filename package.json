@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Personal financial app with Angular frontend and Express backend",
   "private": true,
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "frontend": "cd ng-budget && npm start",
     "backend": "cd backend && npm run dev",

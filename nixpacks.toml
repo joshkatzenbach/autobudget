@@ -1,0 +1,12 @@
+# Nixpacks configuration for Railway
+# Node.js version is auto-detected from .nvmrc or package.json engines field
+# This file customizes the build process for the backend-only deployment
+
+[phases.install]
+cmds = ["cd backend && npm install"]
+
+[phases.build]
+cmds = ["cd backend && npm run build"]
+
+[start]
+cmd = "cd backend && npm start"
