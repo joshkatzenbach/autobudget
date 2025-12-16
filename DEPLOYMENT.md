@@ -49,11 +49,23 @@ Replace `YOUR_USERNAME` with your GitHub username.
 2. Click "New Project"
 3. Select "Deploy from GitHub repo"
 4. Choose your `autobudget` repository
-5. Railway will detect the `railway.toml` and `nixpacks.toml` files and configure the build
-6. **Important**: Railway should auto-detect Node.js 20 from the `.nvmrc` file. If it doesn't:
-   - Go to your service settings
-   - Add environment variable: `NODE_VERSION=20`
-   - Or manually set the Node.js version in Railway's service settings
+5. Railway will detect the repository and create a service
+
+### 2.1.1 Configure Service Root Directory
+
+**Important**: Since this is a monorepo, you need to set the root directory:
+
+1. In your Railway project, click on the service
+2. Go to **Settings** tab
+3. Set **Root Directory** to: `/backend`
+4. This tells Railway to build from the `backend` directory
+5. Railway will automatically detect `backend/railway.toml` and use Railpack
+
+**Railpack will automatically:**
+- Detect Node.js 20 from `backend/package.json` engines field or `.nvmrc`
+- Run `npm install` in the backend directory
+- Run `npm run build` (from package.json scripts)
+- Use `npm start` to start the service
 
 ### 2.2 Configure Environment Variables
 
@@ -61,8 +73,8 @@ In your Railway project, go to **Variables** and add:
 
 ```
 NODE_ENV=production
-NODE_VERSION=20
 PORT=3000
+# Note: Node.js version is auto-detected by Railpack from package.json engines
 DATABASE_URL=<Railway will auto-provision this>
 SESSION_SECRET=<generate a secure random string>
 ENCRYPTION_KEY=<64-character hex string - see backend/ENV_SETUP.md>
