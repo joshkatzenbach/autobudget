@@ -12,7 +12,10 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:4200';
+// Support multiple frontend URLs (comma-separated) for different environments
+const FRONTEND_URLS = process.env.FRONTEND_URL 
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+  : ['http://localhost:4200'];
 
 // Security headers middleware
 app.use(helmet({
@@ -29,7 +32,17 @@ app.use(helmet({
 
 // Middleware
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list
+    if (FRONTEND_URLS.some(url => origin === url || origin.startsWith(url))) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 
@@ -62,19 +75,21 @@ app.use('/api/plaid', plaidRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/slack', slackRoutes);
 
+// Frontend is served separately on Firebase, so we only serve API routes
+
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// 404 handler
+// 404 handler for API routes
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Frontend URL: ${FRONTEND_URL}`);
+  console.log(`Allowed frontend URLs: ${FRONTEND_URLS.join(', ')}`);
 });
 

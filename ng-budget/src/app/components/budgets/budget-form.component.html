@@ -20,7 +20,7 @@
             <div class="form-group">
               <label for="name">
                 Budget Name *
-                <span class="info-icon" title="A descriptive name for your budget (e.g., 'January 2024 Budget')">ℹ️</span>
+                <mat-icon matTooltip="A descriptive name for your budget (e.g., 'January 2024 Budget')" matTooltipPosition="above" class="info-icon">info</mat-icon>
               </label>
               <input
                 type="text"
@@ -36,7 +36,7 @@
             <div class="form-group">
               <label for="income">
                 Income *
-                <span class="info-icon" title="Your total monthly or annual income before taxes. This is used to calculate your available budget after taxes.">ℹ️</span>
+                <mat-icon matTooltip="Your total monthly or annual income before taxes. This is used to calculate your available budget after taxes." matTooltipPosition="above" class="info-icon">info</mat-icon>
               </label>
               <div class="income-input-group">
                 <input
@@ -77,7 +77,7 @@
               <div class="form-group">
                 <label for="filingStatus">
                   Filing Status *
-                  <span class="info-icon" title="Your tax filing status determines your standard deduction and tax brackets. Choose the status you use when filing your federal taxes.">ℹ️</span>
+                  <mat-icon matTooltip="Your tax filing status determines your standard deduction and tax brackets. Choose the status you use when filing your federal taxes." matTooltipPosition="above" class="info-icon">info</mat-icon>
                 </label>
                 <select
                   id="filingStatus"
@@ -97,7 +97,7 @@
               <div class="form-group">
                 <label for="deductions">
                   Additional Deductions ($)
-                  <span class="info-icon" title="Any deductions beyond the standard deduction (e.g., itemized deductions, student loan interest, HSA contributions). This is added to your standard deduction to reduce taxable income.">ℹ️</span>
+                  <mat-icon matTooltip="Any deductions beyond the standard deduction (e.g., itemized deductions, student loan interest, HSA contributions). This is added to your standard deduction to reduce taxable income." matTooltipPosition="above" class="info-icon">info</mat-icon>
                 </label>
                 <input
                   type="number"
@@ -169,7 +169,7 @@
                           <div class="form-group">
                             <label>
                               Category Name *
-                              <span class="info-icon" title="A descriptive name for this budget category (e.g., 'Groceries', 'Rent', 'Emergency Fund')">ℹ️</span>
+                              <mat-icon matTooltip="A descriptive name for this budget category (e.g., 'Groceries', 'Rent', 'Emergency Fund')" matTooltipPosition="above" class="info-icon">info</mat-icon>
                             </label>
                             <input type="text" [(ngModel)]="category.name" name="catName{{$index}}" required [disabled]="loading()" />
                           </div>
@@ -177,7 +177,7 @@
                           <div class="form-group">
                             <label>
                               Category Type *
-                              <span class="info-icon" title="Fixed: For bills with consistent amounts (e.g., rent, utilities). Variable: For flexible spending (e.g., groceries, entertainment). Savings: For money you're setting aside (e.g., emergency fund, retirement).">ℹ️</span>
+                              <mat-icon matTooltip="Fixed: For bills with consistent amounts (e.g., rent, utilities). Variable: For flexible spending (e.g., groceries, entertainment). Savings: For money you're setting aside (e.g., emergency fund, retirement)." matTooltipPosition="above" class="info-icon">info</mat-icon>
                             </label>
                             <select [(ngModel)]="category.categoryType" name="catType{{$index}}" [disabled]="loading()">
                               <option value="fixed">Fixed</option>
@@ -190,7 +190,7 @@
                           <div class="form-group">
                             <label>
                               Amount ($) *
-                              <span class="info-icon" title="The amount you plan to spend (for Fixed/Variable) or save (for Savings) per month or per year. Choose monthly or annual based on how you think about this category.">ℹ️</span>
+                              <mat-icon matTooltip="The amount you plan to spend (for Fixed/Variable) or save (for Savings) per month or per year. Choose monthly or annual based on how you think about this category." matTooltipPosition="above" class="info-icon">info</mat-icon>
                             </label>
                             <div class="amount-input-group">
                               <input type="number" [(ngModel)]="category.allocatedAmount" name="catAmount{{$index}}" step="0.01" min="0" required [disabled]="loading()" />
@@ -228,7 +228,7 @@
                             <div class="form-group">
                               <label>
                                 Accumulated Total ($)
-                                <span class="info-icon" title="The current total amount saved in this category year-to-date. This is the starting balance for tracking your savings progress.">ℹ️</span>
+                                <mat-icon matTooltip="The current total amount saved in this category year-to-date. This is the starting balance for tracking your savings progress." matTooltipPosition="above" class="info-icon">info</mat-icon>
                               </label>
                               <input 
                                 type="number" 
@@ -252,7 +252,7 @@
                                 />
                                 <span>
                                   This savings is tax-deductible
-                                  <span class="info-icon" title="Check this if your savings contributions reduce your taxable income (e.g., Traditional 401k, Traditional IRA, HSA). This will lower your income tax calculations.">ℹ️</span>
+                                  <mat-icon matTooltip="Check this if your savings contributions reduce your taxable income (e.g., Traditional 401k, Traditional IRA, HSA). This will lower your income tax calculations." matTooltipPosition="above" class="info-icon">info</mat-icon>
                                 </span>
                               </label>
                               <small class="help-text">Check if this savings reduces your taxable income (e.g., 401k, Traditional IRA)</small>
@@ -269,7 +269,7 @@
                                   />
                                   <span>
                                     Subject to FICA taxes
-                                    <span class="info-icon" title="Most tax-deductible savings (like 401k) are subject to FICA taxes. Some (like HSA through payroll deduction) may not be. Check your employer's setup.">ℹ️</span>
+                                    <mat-icon matTooltip="Most tax-deductible savings (like 401k) are subject to FICA taxes. Some (like HSA through payroll deduction) may not be. Check your employer's setup." matTooltipPosition="above" class="info-icon">info</mat-icon>
                                   </span>
                                 </label>
                                 <small class="help-text">Check if FICA taxes (Social Security and Medicare) apply to this tax-deductible savings</small>
@@ -286,7 +286,7 @@
                                 />
                                 <span>
                                   This money is stored in an account that is not currently connected
-                                  <span class="info-icon" title="Check this if this savings account is not connected via Plaid. The amount will be added to your total assets on the summary page.">ℹ️</span>
+                                  <mat-icon matTooltip="Check this if this savings account is not connected via Plaid. The amount will be added to your total assets on the summary page." matTooltipPosition="above" class="info-icon">info</mat-icon>
                                 </span>
                               </label>
                               <small class="help-text">If checked, this amount will be added to your assets on the summary page</small>
@@ -309,7 +309,7 @@
                                 />
                                 <span>
                                   Auto-move surplus at month end
-                                  <span class="info-icon" title="If enabled, any money left over in this category at the end of the month will automatically be moved to the selected savings category. If disabled, you'll be prompted via Slack to choose where to move it.">ℹ️</span>
+                                  <mat-icon matTooltip="If enabled, any money left over in this category at the end of the month will automatically be moved to the selected savings category. If disabled, you'll be prompted via Slack to choose where to move it." matTooltipPosition="above" class="info-icon">info</mat-icon>
                                 </span>
                               </label>
                               @if (category.autoMoveSurplus) {
@@ -336,7 +336,7 @@
                                 />
                                 <span>
                                   Auto-move deficit at month end
-                                  <span class="info-icon" title="If enabled, if you overspend in this category, money will automatically be taken from the selected savings category to cover the deficit. If disabled, you'll be prompted via Slack to choose where to take it from.">ℹ️</span>
+                                  <mat-icon matTooltip="If enabled, if you overspend in this category, money will automatically be taken from the selected savings category to cover the deficit. If disabled, you'll be prompted via Slack to choose where to take it from." matTooltipPosition="above" class="info-icon">info</mat-icon>
                                 </span>
                               </label>
                               @if (category.autoMoveDeficit) {
@@ -363,7 +363,7 @@
                             <div class="form-group">
                               <label>
                                 Expected Merchant Name
-                                <span class="info-icon" title="The name of the merchant/business for bills in this category. This helps the AI automatically categorize transactions from this merchant to this category.">ℹ️</span>
+                                <mat-icon matTooltip="The name of the merchant/business for bills in this category. This helps the AI automatically categorize transactions from this merchant to this category." matTooltipPosition="above" class="info-icon">info</mat-icon>
                               </label>
                               <div class="merchant-search-group">
                                 <input 
@@ -408,7 +408,7 @@
                                 />
                                 <span>
                                   Hide from transaction lists
-                                  <span class="info-icon" title="When checked, transactions in this category won't appear in the main transaction list or Slack notifications. Useful for recurring bills you don't need to review.">ℹ️</span>
+                                  <mat-icon matTooltip="When checked, transactions in this category won't appear in the main transaction list or Slack notifications. Useful for recurring bills you don't need to review." matTooltipPosition="above" class="info-icon">info</mat-icon>
                                 </span>
                               </label>
                               <small class="help-text">Hide transactions in this category from the main transaction list and Slack notifications</small>

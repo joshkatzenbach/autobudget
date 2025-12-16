@@ -2,6 +2,8 @@ import { Component, signal, computed, effect, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, ActivatedRoute } from '@angular/router';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatIconModule } from '@angular/material/icon';
 import { BudgetService } from '../../services/budget.service';
 import { TransactionService } from '../../services/transaction.service';
 import { CreateBudgetRequest, CreateBudgetCategoryRequest, UpdateBudgetCategoryRequest, FilingStatus, CategoryType, Budget, BudgetCategory } from '../../models/budget.model';
@@ -32,7 +34,7 @@ interface CategoryForm {
 @Component({
   selector: 'app-budget-form',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, MatTooltipModule, MatIconModule],
   templateUrl: './budget-form.component.html',
   styleUrl: './budget-form.component.scss'
 })
