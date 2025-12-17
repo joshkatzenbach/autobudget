@@ -62,19 +62,26 @@ Since this is a monorepo, you **MUST** set the root directory before Railway can
 3. Scroll down to **Root Directory**
 4. Click the input field and set it to: `/backend`
 5. Click **Save** or press Enter
-6. Railway will now use `backend/railway.toml` and look for `backend/package.json`
+6. **Important**: After saving, you may need to trigger a new deployment for the change to take effect
+7. Railway will now use `backend/railway.toml` and look for `backend/package.json`
 
 **Why this is needed:**
 - Railpack needs to see `package.json` directly in the root directory it's building from
-- Without setting root directory, Railway looks at the repo root and finds the wrong `package.json`
-- The error "No start command was found" means it's looking at the root `package.json` instead of `backend/package.json`
+- Without setting root directory, Railway looks at the repo root and finds the wrong `package.json` (which has no start script)
+- The error "Missing script: start" means it's looking at the root `package.json` instead of `backend/package.json`
+- There is NO root `railway.toml` file - only `backend/railway.toml` exists, so Railway must use the backend directory
 
 **After setting root directory, Railpack will automatically:**
 - Detect Node.js 20 from `backend/package.json` engines field (`"node": ">=20.19.0"`)
 - Or from `.nvmrc` file in backend directory
 - Run `npm install` in the backend directory
 - Run `npm run build` (from backend/package.json scripts)
-- Use `npm start` to start the service (from backend/package.json)
+- Use `npm start` to start the service (from backend/package.json which has `"start": "node dist/server.js"`)
+
+**If you still get "Missing script: start" error:**
+- Double-check that Root Directory is set to exactly `/backend` (with the leading slash)
+- Make sure you saved the settings
+- Trigger a new deployment (Railway → Deployments → Redeploy, or push a new commit)
 
 ### 2.2 Configure Environment Variables
 
@@ -147,15 +154,15 @@ firebase init
 ```
 
 When prompted:
-- Select **Hosting**
-- Select **Use an existing project** (or create a new one)
+- Select **Hosting** (press Space to select, then Enter)
+- Choose **Create a new project** or **Use an existing project**
+  - If creating new: Enter a project name (e.g., `autobudget-frontend`)
+  - If using existing: Select your project from the list
 - **Public directory**: `dist/ng-budget/browser`
-- **Single-page app**: Yes
-- **Overwrite index.html**: No (we already have firebase.json)
+- **Single-page app**: Yes (type `y` and press Enter)
+- **Overwrite index.html**: No (type `n` and press Enter - we already have firebase.json configured)
 
-### 3.2 Update Firebase Project ID
-
-Edit `ng-budget/.firebaserc` and replace `your-firebase-project-id` with your actual Firebase project ID.
+Firebase will automatically create/update `.firebaserc` with your project ID.
 
 ### 3.3 Update Frontend Environment
 
