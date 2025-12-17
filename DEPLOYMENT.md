@@ -118,20 +118,29 @@ FRONTEND_URL=https://<your-firebase-url>.web.app,https://<your-firebase-url>.fir
 2. Railway will automatically set the `DATABASE_URL` environment variable
 3. The database will be provisioned automatically
 
-### 2.4 Run Database Migrations
+### 2.4 Database Migrations (Automatic!)
 
-After the backend deploys, you need to run migrations:
+**Good news!** Migrations now run automatically when your backend starts.
 
-1. In Railway, go to your backend service
-2. Click on the service → "Settings" → "Deploy Logs"
-3. You can run migrations using Railway's CLI or by adding a one-time command:
+The `start` script has been configured to:
+1. Run database migrations first
+2. Then start the server
+
+This happens automatically on every deployment, so you don't need to manually run migrations.
+
+**How it works:**
+- When Railway starts your service, it runs `npm start`
+- This executes `node dist/start.js`
+- The start script runs migrations, then starts the server
+- If migrations fail, the server won't start (preventing schema mismatches)
+
+**Manual migration (if needed):**
+If you ever need to run migrations manually:
 
 ```bash
 # Using Railway CLI (install: npm i -g @railway/cli)
-railway run --service backend "cd backend && npm run db:migrate"
+railway run --service <your-service-name> "npm run db:migrate"
 ```
-
-Or add a migration script to your Railway project that runs on first deploy.
 
 ### 2.5 Get Your Railway URL
 
