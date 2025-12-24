@@ -262,7 +262,8 @@ export async function getTransactionsForUser(
       }
 
       // Get account information (use custom name if available)
-      const [account] = await db
+      // Only query if itemId is not null (transactions can have null itemId after account removal)
+      const account = transaction.itemId ? await db
         .select({
           name: plaidAccounts.name,
           customName: plaidAccounts.customName,
@@ -273,7 +274,8 @@ export async function getTransactionsForUser(
           eq(plaidAccounts.accountId, transaction.accountId),
           eq(plaidAccounts.itemId, transaction.itemId)
         ))
-        .limit(1);
+        .limit(1)
+        .then(results => results[0]) : null;
 
       // Convert date to string if it's a Date object
       const dateValue = transaction.date as unknown;

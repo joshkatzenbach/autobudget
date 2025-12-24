@@ -174,11 +174,13 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    const userId = req.userId; // Type narrowing for TypeScript
+
     // Get user's budget
     const [budget] = await db
       .select()
       .from(budgets)
-      .where(eq(budgets.userId, req.userId))
+      .where(eq(budgets.userId, userId))
       .limit(1);
 
     if (!budget) {
@@ -189,13 +191,13 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
     const items = await db
       .select()
       .from(plaidItems)
-      .where(eq(plaidItems.userId, req.userId));
+      .where(eq(plaidItems.userId, userId));
 
     if (items.length === 0) {
       return res.status(400).json({ error: 'No Plaid accounts connected' });
     }
 
-    console.log(`\n=== Starting transaction sync for user ${req.userId} ===`);
+    console.log(`\n=== Starting transaction sync for user ${userId} ===`);
     console.log(`User has ${items.length} Plaid item(s) connected`);
 
     let totalAdded = 0;
@@ -224,7 +226,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
 
         if (isNew) {
           const storedTx = await storeTransaction(
-            req.userId,
+            userId,
             item.id,
             tx.account_id,
             tx.transaction_id,
@@ -253,7 +255,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
               amount: parseFloat(tx.amount.toString()),
               merchantName: tx.merchant_name || null,
               plaidCategory: plaidCategoryForLLM,
-              userId: req.userId,
+              userId: userId,
               transactionName: tx.name || null,
             });
 
@@ -294,7 +296,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
           } else {
             // Modified transaction doesn't exist, treat as new
             const storedTx = await storeTransaction(
-              req.userId,
+              userId,
               item.id,
               tx.account_id,
               tx.transaction_id,
@@ -323,7 +325,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                 amount: parseFloat(tx.amount.toString()),
                 merchantName: tx.merchant_name || null,
                 plaidCategory: plaidCategoryForLLM,
-                userId: req.userId,
+                userId: userId,
                 transactionName: tx.name || null,
               });
 
