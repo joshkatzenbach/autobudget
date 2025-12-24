@@ -54,6 +54,45 @@
       <div class="summary-actions">
         <app-plaid-link></app-plaid-link>
       </div>
+
+      <!-- Connected Accounts -->
+      <div class="connected-accounts-section">
+        <h2>Connected Accounts</h2>
+        @if (connectedAccountsLoading()) {
+          <div class="loading-message">Loading connected accounts...</div>
+        } @else if (connectedAccounts().length === 0) {
+          <div class="no-accounts">
+            <p>No accounts connected yet. Use the "Connect Account" button above to link your bank accounts.</p>
+          </div>
+        } @else {
+          <div class="connected-accounts-list">
+            @for (connectedAccount of connectedAccounts(); track connectedAccount.item.id) {
+              <div class="connected-account-item">
+                <div class="account-info">
+                  <h3>{{ connectedAccount.item.institutionName || 'Unknown Institution' }}</h3>
+                  <div class="account-details">
+                    @for (account of connectedAccount.accounts; track account.id) {
+                      <div class="account-detail">
+                        <span class="account-name">{{ account.customName || account.name || account.officialName }}</span>
+                        @if (account.mask) {
+                          <span class="account-mask">•••• {{ account.mask }}</span>
+                        }
+                        <span class="account-type">{{ account.type }} / {{ account.subtype }}</span>
+                      </div>
+                    }
+                  </div>
+                </div>
+                <button 
+                  class="btn-danger btn-small" 
+                  (click)="openDisconnectModal(connectedAccount.item.id, connectedAccount.item.institutionName)"
+                  [disabled]="disconnectingItemId() === connectedAccount.item.id">
+                  {{ disconnectingItemId() === connectedAccount.item.id ? 'Disconnecting...' : 'Disconnect' }}
+                </button>
+              </div>
+            }
+          </div>
+        }
+      </div>
       
       <!-- Balance Snapshot -->
       @if (balanceSnapshot()) {
@@ -555,6 +594,47 @@
               </div>
             }
           </div>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Disconnect Account Modal -->
+  @if (showDisconnectModal()) {
+    <div class="modal-overlay" (click)="closeDisconnectModal()">
+      <div class="modal-content" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h2>Disconnect Account</h2>
+          <button class="modal-close" (click)="closeDisconnectModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to disconnect <strong>{{ disconnectItemName() }}</strong>?</p>
+          <p class="modal-warning">This will revoke access to your account and remove it from the app.</p>
+          
+          <div class="modal-option">
+            <label class="checkbox-label">
+              <input 
+                type="checkbox" 
+                [checked]="keepTransactionsOnDisconnect()"
+                (change)="keepTransactionsOnDisconnect.set($any($event.target).checked)"
+              />
+              <span>Keep transaction history</span>
+            </label>
+            <p class="option-description">
+              If checked, your transaction history will be preserved. If unchecked, all transactions from this account will be permanently deleted.
+            </p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" (click)="closeDisconnectModal()" [disabled]="disconnectingItemId() !== null">
+            Cancel
+          </button>
+          <button 
+            class="btn-danger" 
+            (click)="confirmDisconnect()"
+            [disabled]="disconnectingItemId() !== null">
+            {{ disconnectingItemId() !== null ? 'Disconnecting...' : 'Disconnect' }}
+          </button>
         </div>
       </div>
     </div>

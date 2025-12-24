@@ -68,6 +68,7 @@ export const plaidItems = pgTable('plaid_items', {
   accessToken: text('access_token').notNull(), // Encrypted Plaid access token
   institutionId: varchar('institution_id', { length: 255 }),
   institutionName: varchar('institution_name', { length: 255 }),
+  transactionsCursor: text('transactions_cursor'), // Cursor for Transactions Sync API
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -89,7 +90,7 @@ export const plaidAccounts = pgTable('plaid_accounts', {
 export const plaidTransactions = pgTable('plaid_transactions', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  itemId: integer('item_id').notNull().references(() => plaidItems.id, { onDelete: 'cascade' }),
+  itemId: integer('item_id').references(() => plaidItems.id, { onDelete: 'set null' }), // Nullable - allows keeping transactions after account removal
   accountId: varchar('account_id', { length: 255 }).notNull(), // Plaid account_id
   transactionId: varchar('transaction_id', { length: 255 }).notNull().unique(), // Plaid transaction_id
   amount: decimal('amount', { precision: 10, scale: 2 }).notNull(), // Transaction total amount, negative for debits
@@ -185,4 +186,15 @@ export const savingsSnapshots = pgTable('savings_snapshots', {
 }, (table) => ({
   uniqueUserBudgetCategoryMonth: unique().on(table.userId, table.budgetId, table.categoryId, table.year, table.month),
 }));
+
+export const plaidWebhooks = pgTable('plaid_webhooks', {
+  id: serial('id').primaryKey(),
+  itemId: varchar('item_id', { length: 255 }), // Plaid item_id (nullable if webhook doesn't include it)
+  webhookType: varchar('webhook_type', { length: 100 }).notNull(), // e.g., SYNC_UPDATES_AVAILABLE, TRANSACTIONS, etc.
+  webhookCode: varchar('webhook_code', { length: 100 }), // Additional webhook code if present
+  payload: text('payload').notNull(), // Full webhook payload as JSON string
+  processed: boolean('processed').default(false).notNull(), // Whether webhook was successfully processed
+  errorMessage: text('error_message'), // Error message if processing failed
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
 

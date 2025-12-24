@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { budgets, budgetCategories, plaidItems, plaidTransactions, transactionCategories } from '../db/schema';
 import { eq, and, gte, lte, sql } from 'drizzle-orm';
-import { syncTransactionsForItem } from './plaid';
+// Note: Transaction syncing is handled via the /transactions/sync endpoint and webhooks
 import { storeTransaction, assignTransactionCategory } from './transactions';
 import { categorizeTransaction } from './categorization';
 

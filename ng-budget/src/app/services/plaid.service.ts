@@ -11,6 +11,7 @@ export interface PlaidAccount {
   itemId: number;
   accountId: string;
   name: string;
+  customName?: string | null;
   officialName?: string | null;
   type?: string | null;
   subtype?: string | null;
@@ -52,8 +53,9 @@ export class PlaidService {
     return this.api.get<ConnectedAccount[]>('/plaid/accounts');
   }
 
-  deleteItem(itemId: number): Observable<void> {
-    return this.api.delete<void>(`/plaid/item/${itemId}`);
+  deleteItem(itemId: number, keepTransactions: boolean = true): Observable<void> {
+    const endpoint = `/plaid/item/${itemId}?keepTransactions=${keepTransactions}`;
+    return this.api.delete<void>(endpoint);
   }
 
   getBalanceSnapshot(): Observable<{

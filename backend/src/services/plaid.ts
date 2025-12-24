@@ -19,6 +19,10 @@ const configuration = new Configuration({
 export const plaidClient = new PlaidApi(configuration);
 
 export async function createLinkToken(userId: number) {
+  // Get webhook URL from environment (BASE_URL) or construct it
+  const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+  const webhookUrl = `${baseUrl}/api/plaid/webhook`;
+
   const request = {
     user: {
       client_user_id: userId.toString(),
@@ -27,6 +31,7 @@ export async function createLinkToken(userId: number) {
     products: [Products.Transactions],
     country_codes: [CountryCode.Us],
     language: 'en',
+    webhook: webhookUrl,
   };
 
   try {
@@ -107,78 +112,48 @@ export async function getAccountBalances(accessToken: string) {
   }
 }
 
-export async function getTransactions(accessToken: string, startDate: string, endDate: string) {
+/**
+ * Sync transactions using Plaid's Transactions Sync API
+ * Returns added, modified, and removed transactions along with the new cursor
+ */
+export async function syncTransactions(
+  accessToken: string,
+  cursor: string | null = null
+): Promise<{
+  added: any[];
+  modified: any[];
+  removed: any[];
+  nextCursor: string;
+  hasMore: boolean;
+}> {
   try {
-    // Ensure dates are in YYYY-MM-DD format (Plaid requirement)
-    // Handle both Date objects and ISO strings
-    const normalizeDate = (date: string | Date): string => {
-      if (date instanceof Date) {
-        return date.toISOString().split('T')[0];
-      }
-      // If it's an ISO string, extract just the date part
-      return String(date).split('T')[0];
+    const request: any = {
+      access_token: accessToken,
     };
 
-    const startDateStr = normalizeDate(startDate);
-    const endDateStr = normalizeDate(endDate);
+    // If cursor is provided, use it for incremental sync
+    // If null, this is the initial sync
+    if (cursor) {
+      request.cursor = cursor;
+    }
 
-    const allTransactions: any[] = [];
-    let cursor: string | undefined = undefined;
+    const response = await plaidClient.transactionsSync(request);
+    const data = response.data;
 
-    do {
-      const request: any = {
-        access_token: accessToken,
-        start_date: startDateStr,
-        end_date: endDateStr,
-      };
-
-      if (cursor) {
-        request.cursor = cursor;
-      }
-
-      const response = await plaidClient.transactionsGet(request);
-      
-      // Log for debugging
-      if (response.data.transactions && response.data.transactions.length > 0) {
-        console.log(`Fetched ${response.data.transactions.length} transactions from Plaid`);
-        // Log first transaction structure for debugging
-        if (allTransactions.length === 0) {
-          console.log('Sample transaction structure:', JSON.stringify(response.data.transactions[0], null, 2));
-        }
-      }
-      
-      allTransactions.push(...response.data.transactions);
-      cursor = (response.data as any).next_cursor || undefined;
-    } while (cursor);
-
-    console.log(`Total transactions fetched: ${allTransactions.length}`);
-    return allTransactions;
+    console.log(`[SYNC] Fetched ${data.added?.length || 0} added, ${data.modified?.length || 0} modified, ${data.removed?.length || 0} removed transactions`);
+    
+    return {
+      added: data.added || [],
+      modified: data.modified || [],
+      removed: data.removed || [],
+      nextCursor: data.next_cursor,
+      hasMore: data.has_more,
+    };
   } catch (error: any) {
-    console.error('Error getting transactions from Plaid:', error);
+    console.error('Error syncing transactions from Plaid:', error);
     // Log more details if available
     if (error.response?.data) {
       console.error('Plaid error details:', JSON.stringify(error.response.data, null, 2));
-    }
-    throw error;
-  }
-}
-
-export async function syncTransactionsForItem(
-  accessToken: string,
-  userId: number,
-  itemId: number,
-  startDate: string,
-  endDate: string
-) {
-  try {
-    console.log(`    Calling Plaid API with dates: ${startDate} to ${endDate}`);
-    const transactions = await getTransactions(accessToken, startDate, endDate);
-    console.log(`    Plaid API returned ${transactions.length} transactions`);
-    return transactions;
-  } catch (error: any) {
-    console.error(`    Error syncing transactions for item ${itemId}:`, error.message || error);
-    if (error.response?.data) {
-      console.error(`    Plaid API error response:`, JSON.stringify(error.response.data, null, 2));
     }
     throw error;
   }
@@ -193,6 +168,31 @@ export async function removeItem(accessToken: string) {
   } catch (error: any) {
     console.error('Error removing Plaid item:', error);
     // Log more details if available
+    if (error.response?.data) {
+      console.error('Plaid error details:', JSON.stringify(error.response.data, null, 2));
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fire a test webhook in Sandbox environment
+ * Only works in sandbox - use this to test webhook handling
+ */
+export async function fireTestWebhook(accessToken: string, webhookCode: string = 'SYNC_UPDATES_AVAILABLE') {
+  try {
+    // This endpoint only exists in sandbox
+    if (process.env.PLAID_ENV !== 'sandbox') {
+      throw new Error('fireTestWebhook only works in sandbox environment');
+    }
+
+    const response = await plaidClient.sandboxItemFireWebhook({
+      access_token: accessToken,
+      webhook_code: webhookCode as any,
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error('Error firing test webhook:', error);
     if (error.response?.data) {
       console.error('Plaid error details:', JSON.stringify(error.response.data, null, 2));
     }

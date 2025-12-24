@@ -11,7 +11,7 @@ import {
 import { budgets, plaidItems, plaidTransactions, plaidAccounts } from '../db/schema';
 import { db } from '../db';
 import { eq, and } from 'drizzle-orm';
-import { syncTransactionsForItem } from '../services/plaid';
+import { syncTransactions } from '../services/plaid';
 import { storeTransaction } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
 import { decrypt } from '../utils/encryption';
@@ -195,216 +195,234 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'No Plaid accounts connected' });
     }
 
-    // Get date range from budget and convert to YYYY-MM-DD format
-    // Budget dates are stored as date type in PostgreSQL, which Drizzle returns as Date objects
-    // Plaid requires dates in 'YYYY-MM-DD' format (no time component)
-    const startDateValue = budget.startDate as unknown;
-    const startDate = startDateValue instanceof Date 
-      ? (startDateValue as Date).toISOString().split('T')[0]
-      : String(startDateValue).split('T')[0]; // Extract just YYYY-MM-DD if it's a string
-    const endDateValue = budget.endDate as unknown;
-    const endDate = endDateValue instanceof Date
-      ? (endDateValue as Date).toISOString().split('T')[0]
-      : String(endDateValue).split('T')[0]; // Extract just YYYY-MM-DD if it's a string
-
     console.log(`\n=== Starting transaction sync for user ${req.userId} ===`);
-    console.log(`Budget date range: ${startDate} to ${endDate}`);
     console.log(`User has ${items.length} Plaid item(s) connected`);
 
-    let totalFetched = 0;
+    let totalAdded = 0;
+    let totalModified = 0;
+    let totalRemoved = 0;
     let totalCategorized = 0;
 
-    // For each item, fetch transactions
-    for (const item of items) {
+    // Helper function to process a transaction
+    const processTransaction = async (tx: any, isNew: boolean, item: any) => {
       try {
-        console.log(`\nFetching transactions for item ${item.id} (${item.institutionName || 'Unknown'})`);
-        // Decrypt access token before using
-        const decryptedAccessToken = decrypt(item.accessToken);
-        console.log(`  Access token: ${decryptedAccessToken.substring(0, 20)}...`);
-        console.log(`  Date range: ${startDate} to ${endDate}`);
+        let plaidCategory: string | null = null;
+        let plaidCategoryId: string | null = null;
         
-        const transactions = await syncTransactionsForItem(
-          decryptedAccessToken,
-          req.userId,
-          item.id,
-          startDate,
-          endDate
-        );
-
-        console.log(`  ✅ Received ${transactions.length} transactions from Plaid`);
-
-        // Store and categorize each transaction
-        if (transactions.length === 0) {
-          console.log(`  ⚠️  No transactions found in date range ${startDate} to ${endDate}`);
-        } else {
-          console.log(`  📝 Processing ${transactions.length} transactions...`);
+        if (tx.personal_finance_category) {
+          plaidCategory = JSON.stringify({
+            primary: tx.personal_finance_category.primary,
+            detailed: tx.personal_finance_category.detailed,
+          });
+          plaidCategoryId = tx.personal_finance_category.detailed || null;
+        } else if (tx.category) {
+          plaidCategory = JSON.stringify(tx.category);
+          plaidCategoryId = tx.category_id || null;
         }
 
-        let storedCount = 0;
-        let duplicateCount = 0;
-        let errorCount = 0;
+        const amountToStore = tx.amount.toString();
 
-        for (const tx of transactions) {
+        if (isNew) {
+          const storedTx = await storeTransaction(
+            req.userId,
+            item.id,
+            tx.account_id,
+            tx.transaction_id,
+            amountToStore,
+            tx.merchant_name || null,
+            tx.name,
+            tx.date,
+            plaidCategory,
+            plaidCategoryId,
+            tx.pending || false
+          );
+
+          // Categorize new transactions
           try {
-            // Get account type for this transaction
-            const [accountRecord] = await db
-              .select({ type: plaidAccounts.type, subtype: plaidAccounts.subtype })
-              .from(plaidAccounts)
-              .where(and(
-                eq(plaidAccounts.itemId, item.id),
-                eq(plaidAccounts.accountId, tx.account_id)
-              ))
-              .limit(1);
+            let plaidCategoryForLLM: string[] | null = null;
+            if (tx.personal_finance_category) {
+              plaidCategoryForLLM = [
+                tx.personal_finance_category.primary,
+                tx.personal_finance_category.detailed,
+              ];
+            } else if (tx.category) {
+              plaidCategoryForLLM = tx.category;
+            }
 
-            // Log EVERY transaction's raw Plaid amount for debugging
-            console.log(`[PLAID DEBUG] Transaction from Plaid:`, {
-              transaction_id: tx.transaction_id,
-              merchant_name: tx.merchant_name || 'N/A',
-              name: tx.name,
-              raw_amount_from_plaid: tx.amount,
-              amount_type: typeof tx.amount,
-              amount_is_negative: tx.amount < 0,
-              amount_is_positive: tx.amount > 0,
-              date: tx.date,
-              account_id: tx.account_id,
-              account_type: accountRecord?.type || 'UNKNOWN',
-              account_subtype: accountRecord?.subtype || 'UNKNOWN',
-              personal_finance_category: tx.personal_finance_category || null,
+            const categorizationResult = await categorizeTransaction({
+              amount: parseFloat(tx.amount.toString()),
+              merchantName: tx.merchant_name || null,
+              plaidCategory: plaidCategoryForLLM,
+              userId: req.userId,
+              transactionName: tx.name || null,
             });
 
-            // Store transaction (will skip if duplicate due to unique constraint)
-            try {
+            if (categorizationResult.categoryId) {
+              await assignTransactionCategory(
+                storedTx.id,
+                categorizationResult.categoryId,
+                tx.amount.toString(),
+                false // LLM-assigned
+              );
+              totalCategorized++;
+            }
+          } catch (catError: any) {
+            console.error(`Error categorizing transaction ${tx.transaction_id}:`, catError);
+          }
+        } else {
+          // Update existing transaction
+          const [existing] = await db
+            .select()
+            .from(plaidTransactions)
+            .where(eq(plaidTransactions.transactionId, tx.transaction_id))
+            .limit(1);
 
-              // Extract category information from Plaid transaction
-              // Plaid now uses personal_finance_category instead of category
-              let plaidCategory: string | null = null;
-              let plaidCategoryId: string | null = null;
-              
-              if (tx.personal_finance_category) {
-                // Use the detailed category as the category string
-                plaidCategory = JSON.stringify({
-                  primary: tx.personal_finance_category.primary,
-                  detailed: tx.personal_finance_category.detailed,
-                });
-                plaidCategoryId = tx.personal_finance_category.detailed || null;
-              } else if (tx.category) {
-                // Fallback to old category format if available
-                plaidCategory = JSON.stringify(tx.category);
-                plaidCategoryId = tx.category_id || null;
-              }
-
-              // Log before storing
-              const amountToStore = tx.amount.toString();
-              console.log(`[PLAID SYNC DEBUG] Storing transaction:`, {
-                transaction_id: tx.transaction_id,
-                raw_plaid_amount: tx.amount,
-                amount_to_store: amountToStore,
-                merchant_name: tx.merchant_name || 'N/A',
+          if (existing) {
+            await db
+              .update(plaidTransactions)
+              .set({
+                amount: amountToStore,
+                merchantName: tx.merchant_name || null,
                 name: tx.name,
-              });
-
-              const storedTx = await storeTransaction(
-                req.userId,
-                item.id,
-                tx.account_id,
-                tx.transaction_id,
-                amountToStore,
-                tx.merchant_name || null,
-                tx.name,
-                tx.date,
+                date: tx.date,
                 plaidCategory,
                 plaidCategoryId,
-                tx.pending || false
-              );
+                isPending: tx.pending || false,
+                updatedAt: new Date(),
+              })
+              .where(eq(plaidTransactions.transactionId, tx.transaction_id));
+          } else {
+            // Modified transaction doesn't exist, treat as new
+            const storedTx = await storeTransaction(
+              req.userId,
+              item.id,
+              tx.account_id,
+              tx.transaction_id,
+              amountToStore,
+              tx.merchant_name || null,
+              tx.name,
+              tx.date,
+              plaidCategory,
+              plaidCategoryId,
+              tx.pending || false
+            );
 
-              // Log after storing to verify
-              console.log(`[PLAID SYNC DEBUG] Transaction stored in DB:`, {
-                db_id: storedTx.id,
-                transaction_id: storedTx.transactionId,
-                amount_in_db: storedTx.amount,
-                raw_plaid_amount: tx.amount,
-                match: storedTx.amount === amountToStore ? '✓ MATCH' : '✗ MISMATCH',
+            // Categorize
+            try {
+              let plaidCategoryForLLM: string[] | null = null;
+              if (tx.personal_finance_category) {
+                plaidCategoryForLLM = [
+                  tx.personal_finance_category.primary,
+                  tx.personal_finance_category.detailed,
+                ];
+              } else if (tx.category) {
+                plaidCategoryForLLM = tx.category;
+              }
+
+              const categorizationResult = await categorizeTransaction({
+                amount: parseFloat(tx.amount.toString()),
+                merchantName: tx.merchant_name || null,
+                plaidCategory: plaidCategoryForLLM,
+                userId: req.userId,
+                transactionName: tx.name || null,
               });
 
-              totalFetched++;
-              storedCount++;
-
-              // Automatically categorize using LLM
-              try {
-                // Extract category for LLM (use personal_finance_category if available)
-                let plaidCategoryForLLM: string[] | null = null;
-                if (tx.personal_finance_category) {
-                  plaidCategoryForLLM = [
-                    tx.personal_finance_category.primary,
-                    tx.personal_finance_category.detailed,
-                  ];
-                } else if (tx.category) {
-                  plaidCategoryForLLM = tx.category;
-                }
-
-                const categorizationResult = await categorizeTransaction({
-                  amount: parseFloat(tx.amount.toString()),
-                  merchantName: tx.merchant_name || null,
-                  plaidCategory: plaidCategoryForLLM,
-                  userId: req.userId,
-                  transactionName: tx.name || null,
-                });
-
-                if (categorizationResult.categoryId) {
-                  await assignTransactionCategory(
-                    storedTx.id,
-                    categorizationResult.categoryId,
-                    tx.amount.toString(),
-                    false // LLM-assigned
-                  );
-                  totalCategorized++;
-                }
-              } catch (catError: any) {
-                console.error(`Error categorizing transaction ${tx.transaction_id}:`, catError);
-                // Continue - transaction stored but uncategorized
+              if (categorizationResult.categoryId) {
+                await assignTransactionCategory(
+                  storedTx.id,
+                  categorizationResult.categoryId,
+                  tx.amount.toString(),
+                  false
+                );
+                totalCategorized++;
               }
-            } catch (txError: any) {
-              // Check if it's a duplicate transaction error
-              if (txError.message?.includes('unique') || txError.message?.includes('duplicate') || txError.code === '23505') {
-                // Transaction already exists, skip
-                duplicateCount++;
-                if (duplicateCount <= 3) { // Only log first few duplicates to avoid spam
-                  console.log(`  ⏭️  Transaction ${tx.transaction_id} already exists, skipping`);
-                }
-                continue;
-              }
-              errorCount++;
-              console.error(`  ❌ Error storing transaction ${tx.transaction_id}:`, txError.message || txError);
-              if (txError.code) {
-                console.error(`     Error code: ${txError.code}`);
-              }
-              if (txError.detail) {
-                console.error(`     Detail: ${txError.detail}`);
-              }
-              // Continue with next transaction
+            } catch (catError: any) {
+              console.error(`Error categorizing transaction:`, catError);
             }
-          } catch (error: any) {
-            console.error(`Error processing transaction ${tx.transaction_id}:`, error);
-            // Continue with next transaction
           }
         }
-        console.log(`  📊 Item ${item.id} summary: ${storedCount} stored, ${duplicateCount} duplicates, ${errorCount} errors`);
+      } catch (error: any) {
+        console.error(`Error processing transaction ${tx.transaction_id}:`, error);
+      }
+    };
+
+    // For each item, sync transactions
+    for (const item of items) {
+      try {
+        console.log(`\nSyncing transactions for item ${item.id} (${item.institutionName || 'Unknown'})`);
+        const decryptedAccessToken = decrypt(item.accessToken);
+        
+        let currentCursor = item.transactionsCursor || null;
+        let hasMore = true;
+        let itemAdded = 0;
+        let itemModified = 0;
+        let itemRemoved = 0;
+
+        // Continue syncing until all updates are fetched
+        while (hasMore) {
+          const syncResult = await syncTransactions(decryptedAccessToken, currentCursor);
+          
+          // Process added transactions
+          for (const tx of syncResult.added) {
+            itemAdded++;
+            totalAdded++;
+            await processTransaction(tx, true, item);
+          }
+
+          // Process modified transactions
+          for (const tx of syncResult.modified) {
+            itemModified++;
+            totalModified++;
+            await processTransaction(tx, false, item);
+          }
+
+          // Process removed transactions
+          for (const removedTx of syncResult.removed) {
+            itemRemoved++;
+            totalRemoved++;
+            try {
+              await db
+                .delete(plaidTransactions)
+                .where(eq(plaidTransactions.transactionId, removedTx.transaction_id));
+            } catch (error: any) {
+              console.error(`Error removing transaction ${removedTx.transaction_id}:`, error);
+            }
+          }
+
+          // Update cursor and check if more data is available
+          currentCursor = syncResult.nextCursor;
+          hasMore = syncResult.hasMore;
+
+          // Update cursor in database after each batch
+          if (currentCursor) {
+            await db
+              .update(plaidItems)
+              .set({
+                transactionsCursor: currentCursor,
+                updatedAt: new Date(),
+              })
+              .where(eq(plaidItems.id, item.id));
+          }
+        }
+
+        console.log(`  📊 Item ${item.id} summary: ${itemAdded} added, ${itemModified} modified, ${itemRemoved} removed`);
       } catch (itemError: any) {
-        console.error(`  ❌ Error fetching transactions for item ${item.id}:`, itemError.message || itemError);
+        console.error(`  ❌ Error syncing transactions for item ${item.id}:`, itemError.message || itemError);
         if (itemError.response?.data) {
           console.error(`  Plaid API error:`, JSON.stringify(itemError.response.data, null, 2));
         }
-        // Continue with next item
       }
     }
 
     console.log(`\n=== Transaction sync complete ===`);
-    console.log(`Total fetched: ${totalFetched}, Total categorized: ${totalCategorized}\n`);
+    console.log(`Total: ${totalAdded} added, ${totalModified} modified, ${totalRemoved} removed, ${totalCategorized} categorized\n`);
 
     res.json({
       success: true,
-      message: `Fetched ${totalFetched} transactions, categorized ${totalCategorized}`,
-      fetched: totalFetched,
+      message: `${totalAdded} added, ${totalModified} modified, ${totalRemoved} removed, ${totalCategorized} categorized`,
+      added: totalAdded,
+      modified: totalModified,
+      removed: totalRemoved,
       categorized: totalCategorized,
     });
   } catch (error: any) {

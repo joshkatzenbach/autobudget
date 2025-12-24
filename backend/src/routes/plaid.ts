@@ -2,7 +2,7 @@ import express, { Response, Request } from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { verifyPlaidWebhook } from '../middleware/webhook-verification';
 import { db } from '../db';
-import { plaidItems, plaidAccounts, plaidTransactions, budgets } from '../db/schema';
+import { plaidItems, plaidAccounts, plaidTransactions, budgets, plaidWebhooks } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import {
   createLinkToken,
@@ -11,8 +11,9 @@ import {
   getItem,
   getInstitution,
   getAccountBalances,
-  syncTransactionsForItem,
+  syncTransactions,
   removeItem,
+  fireTestWebhook,
 } from '../services/plaid';
 import { storeTransaction, assignTransactionCategory } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
@@ -23,14 +24,31 @@ const router = express.Router();
 
 // Webhook endpoint (public, but requires webhook verification)
 router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) => {
+  let webhookRecordId: number | null = null;
+  
   try {
-    const { webhook_type, item_id, new_transactions } = req.body;
+    const { webhook_type, item_id, webhook_code } = req.body;
+
+    // Store webhook in database immediately
+    const [webhookRecord] = await db
+      .insert(plaidWebhooks)
+      .values({
+        itemId: item_id || null,
+        webhookType: webhook_type || 'UNKNOWN',
+        webhookCode: webhook_code || null,
+        payload: JSON.stringify(req.body),
+        processed: false,
+      })
+      .returning();
+    
+    webhookRecordId = webhookRecord.id;
+    console.log(`[WEBHOOK] Stored webhook #${webhookRecordId}: ${webhook_type} for item ${item_id || 'N/A'}`);
 
     // Acknowledge receipt immediately
     res.status(200).json({ received: true });
 
     // Handle webhook asynchronously
-    if (webhook_type === 'TRANSACTIONS' || webhook_type === 'SYNC_UPDATES_AVAILABLE') {
+    if (webhook_type === 'SYNC_UPDATES_AVAILABLE') {
       // Find Plaid item in database
       const [plaidItem] = await db
         .select()
@@ -43,170 +61,257 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
         return;
       }
 
-      // Get date range for fetching new transactions (last 30 days)
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 30);
-
-      const startDateStr = startDate.toISOString().split('T')[0];
-      const endDateStr = endDate.toISOString().split('T')[0];
-
       // Decrypt access token before using
       const decryptedAccessToken = decrypt(plaidItem.accessToken);
       
-      // Fetch new transactions
-      const transactions = await syncTransactionsForItem(
-        decryptedAccessToken,
-        plaidItem.userId,
-        plaidItem.id,
-        startDateStr,
-        endDateStr
-      );
+      // Sync transactions using the stored cursor (or null for initial sync)
+      let currentCursor = plaidItem.transactionsCursor || null;
+      let hasMore = true;
+      let totalAdded = 0;
+      let totalModified = 0;
+      let totalRemoved = 0;
 
-      // Store and categorize each transaction
-      for (const tx of transactions) {
+      // Helper function to process a transaction (added or modified)
+      const processTransaction = async (tx: any, isNew: boolean) => {
         try {
-          // Log EVERY transaction's raw Plaid amount for debugging
-          console.log(`[PLAID WEBHOOK DEBUG] Transaction from Plaid:`, {
-            transaction_id: tx.transaction_id,
-            merchant_name: tx.merchant_name || 'N/A',
-            name: tx.name,
-            raw_amount_from_plaid: tx.amount,
-            amount_type: typeof tx.amount,
-            amount_is_negative: tx.amount < 0,
-            amount_is_positive: tx.amount > 0,
-            date: tx.date,
-            account_id: tx.account_id,
-          });
-
-          // Check if transaction already exists
-          const [existing] = await db
-            .select()
-            .from(plaidTransactions)
-            .where(eq(plaidTransactions.transactionId, tx.transaction_id))
-            .limit(1);
-
-          if (existing) {
-            console.log(`[PLAID WEBHOOK DEBUG] Transaction ${tx.transaction_id} already exists, skipping`);
-            continue; // Skip if already stored
-          }
-
           // Extract category information from Plaid transaction
-          // Plaid now uses personal_finance_category instead of category
           let plaidCategory: string | null = null;
           let plaidCategoryId: string | null = null;
           
           if (tx.personal_finance_category) {
-            // Use the detailed category as the category string
             plaidCategory = JSON.stringify({
               primary: tx.personal_finance_category.primary,
               detailed: tx.personal_finance_category.detailed,
             });
             plaidCategoryId = tx.personal_finance_category.detailed || null;
           } else if (tx.category) {
-            // Fallback to old category format if available
             plaidCategory = JSON.stringify(tx.category);
             plaidCategoryId = tx.category_id || null;
           }
 
-          // Log before storing
           const amountToStore = tx.amount.toString();
-          console.log(`[PLAID WEBHOOK DEBUG] Storing transaction:`, {
-            transaction_id: tx.transaction_id,
-            raw_plaid_amount: tx.amount,
-            amount_to_store: amountToStore,
-            merchant_name: tx.merchant_name || 'N/A',
-            name: tx.name,
-          });
 
-          // Store transaction
-          const storedTx = await storeTransaction(
-            plaidItem.userId,
-            plaidItem.id,
-            tx.account_id,
-            tx.transaction_id,
-            amountToStore,
-            tx.merchant_name || null,
-            tx.name,
-            tx.date,
-            plaidCategory,
-            plaidCategoryId,
-            tx.pending || false
-          );
+          if (isNew) {
+            // Check if transaction already exists (shouldn't happen with sync API, but safety check)
+            const [existing] = await db
+              .select()
+              .from(plaidTransactions)
+              .where(eq(plaidTransactions.transactionId, tx.transaction_id))
+              .limit(1);
 
-          // Log after storing to verify
-          console.log(`[PLAID WEBHOOK DEBUG] Transaction stored in DB:`, {
-            db_id: storedTx.id,
-            transaction_id: storedTx.transactionId,
-            amount_in_db: storedTx.amount,
-            raw_plaid_amount: tx.amount,
-            match: storedTx.amount === amountToStore ? '✓ MATCH' : '✗ MISMATCH',
-          });
+            if (existing) {
+              console.log(`[SYNC] Transaction ${tx.transaction_id} already exists, skipping`);
+              return;
+            }
 
-          // Categorize transaction (get first active budget for user)
-          const [userBudget] = await db
-            .select()
-            .from(budgets)
-            .where(and(
-              eq(budgets.userId, plaidItem.userId),
-              eq(budgets.isActive, true)
-            ))
-            .limit(1);
+            // Store new transaction
+            const storedTx = await storeTransaction(
+              plaidItem.userId,
+              plaidItem.id,
+              tx.account_id,
+              tx.transaction_id,
+              amountToStore,
+              tx.merchant_name || null,
+              tx.name,
+              tx.date,
+              plaidCategory,
+              plaidCategoryId,
+              tx.pending || false
+            );
 
-          if (userBudget) {
-            try {
-              // Extract category for LLM (use personal_finance_category if available)
-              let plaidCategoryForLLM: string[] | null = null;
-              if (tx.personal_finance_category) {
-                plaidCategoryForLLM = [
-                  tx.personal_finance_category.primary,
-                  tx.personal_finance_category.detailed,
-                ];
-              } else if (tx.category) {
-                plaidCategoryForLLM = tx.category;
-              }
+            // Categorize and notify for new transactions
+            await categorizeAndNotify(storedTx, tx);
+          } else {
+            // Update existing transaction
+            const [existing] = await db
+              .select()
+              .from(plaidTransactions)
+              .where(eq(plaidTransactions.transactionId, tx.transaction_id))
+              .limit(1);
 
-              const categorizationResult = await categorizeTransaction({
-                amount: parseFloat(tx.amount.toString()),
-                merchantName: tx.merchant_name || null,
-                plaidCategory: plaidCategoryForLLM,
-                userId: plaidItem.userId,
-                transactionName: tx.name || null,
-              });
-
-              if (categorizationResult.categoryId) {
-                await assignTransactionCategory(
-                  storedTx.id,
-                  categorizationResult.categoryId,
-                  tx.amount.toString(),
-                  false // LLM-assigned
-                );
-
-                // Send Slack notification
-                try {
-                  await sendTransactionNotification(
-                    plaidItem.userId,
-                    storedTx.id,
-                    categorizationResult.categoryId
-                  );
-                } catch (slackError: any) {
-                  console.error(`Error sending Slack notification for transaction ${storedTx.id}:`, slackError);
-                  // Don't fail the webhook if Slack fails
-                }
-              }
-            } catch (error: any) {
-              console.error(`Error categorizing transaction ${tx.transaction_id}:`, error);
-              // Continue - transaction stored but uncategorized
+            if (existing) {
+              await db
+                .update(plaidTransactions)
+                .set({
+                  amount: amountToStore,
+                  merchantName: tx.merchant_name || null,
+                  name: tx.name,
+                  date: tx.date,
+                  plaidCategory,
+                  plaidCategoryId,
+                  isPending: tx.pending || false,
+                  updatedAt: new Date(),
+                })
+                .where(eq(plaidTransactions.transactionId, tx.transaction_id));
+              
+              console.log(`[SYNC] Updated transaction ${tx.transaction_id}`);
+            } else {
+              // Modified transaction doesn't exist, treat as new
+              const storedTx = await storeTransaction(
+                plaidItem.userId,
+                plaidItem.id,
+                tx.account_id,
+                tx.transaction_id,
+                amountToStore,
+                tx.merchant_name || null,
+                tx.name,
+                tx.date,
+                plaidCategory,
+                plaidCategoryId,
+                tx.pending || false
+              );
+              await categorizeAndNotify(storedTx, tx);
             }
           }
         } catch (error: any) {
           console.error(`Error processing transaction ${tx.transaction_id}:`, error);
-          // Continue with next transaction
         }
+      };
+
+      // Helper function to categorize and send notifications
+      const categorizeAndNotify = async (storedTx: any, tx: any) => {
+        const [userBudget] = await db
+          .select()
+          .from(budgets)
+          .where(and(
+            eq(budgets.userId, plaidItem.userId),
+            eq(budgets.isActive, true)
+          ))
+          .limit(1);
+
+        if (userBudget) {
+          try {
+            let plaidCategoryForLLM: string[] | null = null;
+            if (tx.personal_finance_category) {
+              plaidCategoryForLLM = [
+                tx.personal_finance_category.primary,
+                tx.personal_finance_category.detailed,
+              ];
+            } else if (tx.category) {
+              plaidCategoryForLLM = tx.category;
+            }
+
+            const categorizationResult = await categorizeTransaction({
+              amount: parseFloat(tx.amount.toString()),
+              merchantName: tx.merchant_name || null,
+              plaidCategory: plaidCategoryForLLM,
+              userId: plaidItem.userId,
+              transactionName: tx.name || null,
+            });
+
+            if (categorizationResult.categoryId) {
+              await assignTransactionCategory(
+                storedTx.id,
+                categorizationResult.categoryId,
+                tx.amount.toString(),
+                false // LLM-assigned
+              );
+
+              // Send Slack notification
+              try {
+                await sendTransactionNotification(
+                  plaidItem.userId,
+                  storedTx.id,
+                  categorizationResult.categoryId
+                );
+              } catch (slackError: any) {
+                console.error(`Error sending Slack notification:`, slackError);
+              }
+            }
+          } catch (error: any) {
+            console.error(`Error categorizing transaction:`, error);
+          }
+        }
+      };
+
+      // Continue syncing until all updates are fetched
+      while (hasMore) {
+        const syncResult = await syncTransactions(decryptedAccessToken, currentCursor);
+        
+        // Process added transactions
+        for (const tx of syncResult.added) {
+          totalAdded++;
+          await processTransaction(tx, true);
+        }
+
+        // Process modified transactions
+        for (const tx of syncResult.modified) {
+          totalModified++;
+          await processTransaction(tx, false);
+        }
+
+        // Process removed transactions
+        for (const removedTx of syncResult.removed) {
+          totalRemoved++;
+          try {
+            await db
+              .delete(plaidTransactions)
+              .where(eq(plaidTransactions.transactionId, removedTx.transaction_id));
+            console.log(`[SYNC] Removed transaction ${removedTx.transaction_id}`);
+          } catch (error: any) {
+            console.error(`Error removing transaction ${removedTx.transaction_id}:`, error);
+          }
+        }
+
+        // Update cursor and check if more data is available
+        currentCursor = syncResult.nextCursor;
+        hasMore = syncResult.hasMore;
+
+        // Update cursor in database after each batch
+        if (currentCursor) {
+          await db
+            .update(plaidItems)
+            .set({
+              transactionsCursor: currentCursor,
+              updatedAt: new Date(),
+            })
+            .where(eq(plaidItems.id, plaidItem.id));
+        }
+      }
+
+      console.log(`[SYNC] Webhook sync complete: ${totalAdded} added, ${totalModified} modified, ${totalRemoved} removed`);
+      
+      // Update webhook record as processed
+      if (webhookRecordId) {
+        await db
+          .update(plaidWebhooks)
+          .set({
+            processed: true,
+            errorMessage: null,
+          })
+          .where(eq(plaidWebhooks.id, webhookRecordId));
+      }
+    } else {
+      // Webhook type not handled, but still mark as processed
+      console.log(`[WEBHOOK] Received unhandled webhook type: ${webhook_type}`);
+      if (webhookRecordId) {
+        await db
+          .update(plaidWebhooks)
+          .set({
+            processed: true,
+            errorMessage: `Unhandled webhook type: ${webhook_type}`,
+          })
+          .where(eq(plaidWebhooks.id, webhookRecordId));
       }
     }
   } catch (error: any) {
     console.error('Error processing webhook:', error);
+    
+    // Update webhook record with error
+    if (webhookRecordId) {
+      try {
+        await db
+          .update(plaidWebhooks)
+          .set({
+            processed: false,
+            errorMessage: error.message || String(error),
+          })
+          .where(eq(plaidWebhooks.id, webhookRecordId));
+      } catch (updateError: any) {
+        console.error('Error updating webhook record:', updateError);
+      }
+    }
+    
     // Don't send error response - webhook already acknowledged
   }
 });
@@ -397,6 +502,9 @@ router.delete('/item/:itemId', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Invalid item ID' });
     }
 
+    // Parse keepTransactions query parameter (defaults to true if not provided)
+    const keepTransactions = req.query.keepTransactions !== 'false';
+
     // Verify item belongs to user
     const [item] = await db
       .select()
@@ -419,7 +527,22 @@ router.delete('/item/:itemId', async (req: AuthRequest, res: Response) => {
       console.warn('Continuing with database deletion despite Plaid revocation error');
     }
 
-    // Delete item from database (cascade will delete accounts)
+    // Handle transactions based on user preference
+    if (keepTransactions) {
+      // Set itemId to null on all transactions for this item (preserves transaction history)
+      // This happens automatically via the foreign key constraint (SET NULL), but we'll do it explicitly for clarity
+      await db
+        .update(plaidTransactions)
+        .set({ itemId: null })
+        .where(eq(plaidTransactions.itemId, itemId));
+    } else {
+      // Delete all transactions for this item (transactionCategories will cascade delete)
+      await db
+        .delete(plaidTransactions)
+        .where(eq(plaidTransactions.itemId, itemId));
+    }
+
+    // Delete item from database (cascade will delete accounts, but NOT transactions)
     await db.delete(plaidItems).where(eq(plaidItems.id, itemId));
 
     res.json({ message: 'Item deleted successfully' });
@@ -668,6 +791,55 @@ router.post('/test/generate-transaction', async (req: AuthRequest, res: Response
   } catch (error: any) {
     console.error('Error generating test transaction:', error);
     res.status(500).json({ error: 'Failed to generate test transaction', details: error.message });
+  }
+});
+
+// Test endpoint to fire a Plaid webhook (Sandbox only)
+router.post('/test/fire-webhook', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (process.env.PLAID_ENV !== 'sandbox') {
+      return res.status(400).json({ 
+        error: 'This endpoint only works in sandbox environment',
+        currentEnv: process.env.PLAID_ENV 
+      });
+    }
+
+    // Get user's first Plaid item
+    const [plaidItem] = await db
+      .select()
+      .from(plaidItems)
+      .where(eq(plaidItems.userId, req.userId))
+      .limit(1);
+
+    if (!plaidItem) {
+      return res.status(400).json({ error: 'No Plaid account connected. Please connect an account first.' });
+    }
+
+    // Decrypt access token
+    const decryptedAccessToken = decrypt(plaidItem.accessToken);
+
+    // Fire the webhook
+    const webhookCode = req.body.webhook_code || 'SYNC_UPDATES_AVAILABLE';
+    const result = await fireTestWebhook(decryptedAccessToken, webhookCode);
+
+    res.json({
+      success: true,
+      message: `Webhook fired successfully. Check your server logs to see if it was received.`,
+      webhook_code: webhookCode,
+      item_id: plaidItem.itemId,
+      plaid_response: result,
+    });
+  } catch (error: any) {
+    console.error('Error firing test webhook:', error);
+    res.status(500).json({ 
+      error: 'Failed to fire test webhook', 
+      details: error.message,
+      note: 'This endpoint only works in sandbox environment'
+    });
   }
 });
 

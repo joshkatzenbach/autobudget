@@ -36,14 +36,25 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    // Check if origin is in allowed list
-    if (FRONTEND_URLS.some(url => origin === url || origin.startsWith(url))) {
+    // Normalize origin and allowed URLs for comparison (remove trailing slashes)
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    
+    // Check if origin matches any allowed URL (exact match or starts with)
+    const isAllowed = FRONTEND_URLS.some(url => {
+      const normalizedUrl = url.replace(/\/$/, '');
+      return normalizedOrigin === normalizedUrl || normalizedOrigin.startsWith(normalizedUrl);
+    });
+    
+    if (isAllowed) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      console.warn(`CORS blocked origin: ${origin}. Allowed: ${FRONTEND_URLS.join(', ')}`);
+      callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
     }
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // Health check

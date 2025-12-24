@@ -44,3 +44,4 @@ runMigrations()
     console.error('Failed to run migrations:', err);
     process.exit(1);
   });
+

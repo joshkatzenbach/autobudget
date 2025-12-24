@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
 import { BudgetService } from '../../services/budget.service';
 import { AuthService } from '../../services/auth.service';
-import { PlaidService } from '../../services/plaid.service';
+import { PlaidService, ConnectedAccount } from '../../services/plaid.service';
 import { TransactionService } from '../../services/transaction.service';
 import { Budget, TransactionWithCategories, BudgetCategory } from '../../models/budget.model';
 import { PlaidLinkComponent } from '../plaid-link/plaid-link.component';
@@ -73,6 +73,15 @@ export class BudgetsComponent implements OnInit {
   editingTransactionId = signal<number | null>(null);
   editingSplits = signal<Map<number, Array<{categoryId: number | null; amount: string; useRemaining: boolean}>>>(new Map());
 
+  // Connected accounts management
+  connectedAccounts = signal<ConnectedAccount[]>([]);
+  connectedAccountsLoading = signal(false);
+  disconnectingItemId = signal<number | null>(null);
+  showDisconnectModal = signal(false);
+  disconnectItemId = signal<number | null>(null);
+  disconnectItemName = signal<string>('');
+  keepTransactionsOnDisconnect = signal(true);
+
   constructor(
     private budgetService: BudgetService,
     private authService: AuthService,
@@ -86,6 +95,7 @@ export class BudgetsComponent implements OnInit {
     this.loadBalanceSnapshot();
     this.loadTransactions(15, 0);
     this.loadCategories();
+    this.loadConnectedAccounts();
   }
 
   loadBudget() {
@@ -198,6 +208,61 @@ export class BudgetsComponent implements OnInit {
           this.balanceError.set(err.error?.error || 'Failed to load balance snapshot');
         }
         this.balanceLoading.set(false);
+      }
+    });
+  }
+
+  loadConnectedAccounts() {
+    this.connectedAccountsLoading.set(true);
+    this.plaidService.getAccounts().subscribe({
+      next: (accounts) => {
+        this.connectedAccounts.set(accounts);
+        this.connectedAccountsLoading.set(false);
+      },
+      error: (err) => {
+        console.error('Error loading connected accounts:', err);
+        this.connectedAccountsLoading.set(false);
+      }
+    });
+  }
+
+  openDisconnectModal(itemId: number, institutionName: string | null) {
+    this.disconnectItemId.set(itemId);
+    this.disconnectItemName.set(institutionName || 'Unknown Institution');
+    this.keepTransactionsOnDisconnect.set(true);
+    this.showDisconnectModal.set(true);
+  }
+
+  closeDisconnectModal() {
+    this.showDisconnectModal.set(false);
+    this.disconnectItemId.set(null);
+    this.disconnectItemName.set('');
+    this.keepTransactionsOnDisconnect.set(true);
+  }
+
+  confirmDisconnect() {
+    const itemId = this.disconnectItemId();
+    if (!itemId) return;
+
+    this.disconnectingItemId.set(itemId);
+    const keepTransactions = this.keepTransactionsOnDisconnect();
+
+    this.plaidService.deleteItem(itemId, keepTransactions).subscribe({
+      next: () => {
+        // Reload connected accounts and balance snapshot
+        this.loadConnectedAccounts();
+        this.loadBalanceSnapshot();
+        // Reload transactions if we deleted them
+        if (!keepTransactions) {
+          this.loadTransactions(15, 0);
+        }
+        this.closeDisconnectModal();
+        this.disconnectingItemId.set(null);
+      },
+      error: (err) => {
+        console.error('Error disconnecting account:', err);
+        alert(err.error?.error || 'Failed to disconnect account');
+        this.disconnectingItemId.set(null);
       }
     });
   }

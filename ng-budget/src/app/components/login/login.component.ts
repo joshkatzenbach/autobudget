@@ -67,7 +67,7 @@ export class LoginComponent {
           let errorMessage = 'Registration failed';
           
           if (err.status === 0) {
-            errorMessage = 'Cannot connect to server. Is the backend running on http://localhost:3000?';
+            errorMessage = 'Cannot connect to server. Please check your connection and try again.';
           } else if (err.error?.error) {
             errorMessage = err.error.error;
           } else if (err.message) {
