@@ -5,10 +5,11 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-const connectionString = process.env.DATABASE_URL;
+// Use DATABASE_PUBLIC_URL if available (for Railway CLI), otherwise fall back to DATABASE_URL
+const connectionString = process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL;
 
 if (!connectionString) {
-  throw new Error('DATABASE_URL environment variable is not set');
+  throw new Error('DATABASE_URL or DATABASE_PUBLIC_URL environment variable is not set');
 }
 
 const sql = postgres(connectionString, { max: 1 });

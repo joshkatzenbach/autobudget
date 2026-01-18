@@ -84,7 +84,7 @@
                 </div>
                 <button 
                   class="btn-danger btn-small" 
-                  (click)="openDisconnectModal(connectedAccount.item.id, connectedAccount.item.institutionName)"
+                  (click)="openDisconnectModal(connectedAccount.item.id, connectedAccount.item.institutionName ?? null)"
                   [disabled]="disconnectingItemId() === connectedAccount.item.id">
                   {{ disconnectingItemId() === connectedAccount.item.id ? 'Disconnecting...' : 'Disconnect' }}
                 </button>

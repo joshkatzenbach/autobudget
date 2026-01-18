@@ -11,3 +11,5 @@ CREATE TABLE "plaid_webhooks" (
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 
+
+
