@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { plaidTransactions, transactionCategories, monthlyCategorySummaries, budgetCategories, budgets, plaidAccounts } from '../db/schema';
-import { eq, and, desc, gte, lte, sql, inArray, isNull } from 'drizzle-orm';
+import { eq, and, desc, asc, gte, lte, sql, inArray, isNull } from 'drizzle-orm';
 
 export interface TransactionWithCategories {
   id: number;
@@ -191,12 +191,15 @@ export async function getTransactionsForUser(
     whereCondition = eq(plaidTransactions.userId, userId);
   }
 
-  // Build query - order by date (most recent first)
+  // Build query - order by date (most recent first), then alphabetically by merchant name (use name as fallback if merchantName is null)
   const query = db
     .select()
     .from(plaidTransactions)
     .where(whereCondition)
-    .orderBy(desc(plaidTransactions.date));
+    .orderBy(
+      desc(plaidTransactions.date),
+      asc(sql`COALESCE(${plaidTransactions.merchantName}, ${plaidTransactions.name})`)
+    );
 
   const transactions = limit !== undefined
     ? await query.limit(limit).offset(offset || 0)

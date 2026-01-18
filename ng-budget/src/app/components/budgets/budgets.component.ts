@@ -119,8 +119,9 @@ export class BudgetsComponent implements OnInit {
     this.transactionsError.set(null);
 
     const reviewed = this.reviewedFilter() === 'all' ? null : this.reviewedFilter() === 'reviewed';
+    const includeHiddenFixed = this.showHiddenFixed();
 
-    this.transactionService.getTransactions(limit, offset, reviewed).subscribe({
+    this.transactionService.getTransactions(limit, offset, reviewed, includeHiddenFixed).subscribe({
       next: (transactions) => {
         // Debug: Log first transaction to verify accountName is present
         if (transactions.length > 0 && offset === 0) {
@@ -335,11 +336,17 @@ export class BudgetsComponent implements OnInit {
       next: (categories) => {
         // Ensure all categories are included, including Excluded
         // Do NOT filter out any categories here - they should all appear in transaction dropdowns
-        this.categories.set(categories);
+        // Sort categories alphabetically by name
+        const sortedCategories = [...categories].sort((a, b) => {
+          const nameA = (a.name || '').toLowerCase();
+          const nameB = (b.name || '').toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+        this.categories.set(sortedCategories);
         // Debug: Log to verify Excluded category is loaded
-        const excludedCategory = categories.find(c => c.categoryType === 'excluded');
+        const excludedCategory = sortedCategories.find(c => c.categoryType === 'excluded');
         if (!excludedCategory) {
-          console.warn('Excluded category not found in loaded categories. Categories loaded:', categories.map(c => ({ id: c.id, name: c.name, type: c.categoryType })));
+          console.warn('Excluded category not found in loaded categories. Categories loaded:', sortedCategories.map(c => ({ id: c.id, name: c.name, type: c.categoryType })));
         } else {
           console.log('Excluded category found:', excludedCategory);
         }

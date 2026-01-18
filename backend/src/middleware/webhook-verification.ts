@@ -23,7 +23,13 @@ export function verifyPlaidWebhook(req: Request, res: Response, next: NextFuncti
   
   if (!providedKey) {
     console.warn('Plaid webhook missing verification key');
-    return res.status(401).json({ error: 'Missing webhook verification key' });
+    // In development, allow webhooks without verification key header
+    // (Plaid sandbox may not always send the header)
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(401).json({ error: 'Missing webhook verification key' });
+    }
+    // In development, log warning but allow through
+    return next();
   }
 
   // Compare the provided key with our expected key
