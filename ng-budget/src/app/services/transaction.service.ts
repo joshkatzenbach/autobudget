@@ -57,8 +57,12 @@ export class TransactionService {
     return this.api.get<MonthlyCategorySummary[]>(`/transactions/summaries${queryString ? '?' + queryString : ''}`);
   }
 
-  syncTransactions(): Observable<{ success: boolean; message: string; fetched: number; categorized: number }> {
-    return this.api.post(`/transactions/sync`, {});
+  syncTransactions(startDate?: string): Observable<{ success: boolean; message: string; fetched: number; categorized: number }> {
+    const body: any = {};
+    if (startDate) {
+      body.startDate = startDate;
+    }
+    return this.api.post(`/transactions/sync`, body);
   }
 }
 

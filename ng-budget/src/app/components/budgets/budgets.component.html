@@ -310,9 +310,25 @@
     <div class="tab-content transactions-tab">
       <!-- Sync Transactions Button -->
       <div class="transactions-actions">
-        <button class="btn-primary" (click)="syncTransactions()" [disabled]="syncLoading()">
-          {{ syncLoading() ? 'Syncing...' : 'Sync Transactions' }}
-        </button>
+        <div class="sync-controls">
+          <div class="month-selector">
+            <label for="sync-month">Fetch transactions from:</label>
+            <select 
+              id="sync-month"
+              [ngModel]="syncStartMonth()" 
+              (ngModelChange)="syncStartMonth.set($event)"
+              [disabled]="syncLoading()"
+            >
+              <option value="">Latest transactions only (incremental sync)</option>
+              @for (month of getAvailableMonths(); track month) {
+                <option [value]="month">{{ formatMonth(month) }}</option>
+              }
+            </select>
+          </div>
+          <button class="btn-primary" (click)="syncTransactions()" [disabled]="syncLoading()">
+            {{ syncLoading() ? 'Syncing...' : 'Sync Transactions' }}
+          </button>
+        </div>
       </div>
       
       <!-- Recent Transactions -->

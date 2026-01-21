@@ -39,6 +39,7 @@ export class BudgetsComponent implements OnInit {
   showHiddenFixed = signal(false); // Toggle to show/hide Fixed categories with hideFromTransactionLists
   
   syncLoading = signal(false);
+  syncStartMonth = signal<string>(''); // Format: YYYY-MM or empty for incremental sync
   
   balanceSnapshot = signal<{
     netBalance: number;
@@ -150,18 +151,41 @@ export class BudgetsComponent implements OnInit {
 
   syncTransactions() {
     this.syncLoading.set(true);
-    this.transactionService.syncTransactions().subscribe({
+    const startDate = this.syncStartMonth() || undefined;
+    this.transactionService.syncTransactions(startDate).subscribe({
       next: (result) => {
         this.syncLoading.set(false);
         // Reload transactions after sync
         this.transactionsOffset.set(0);
         this.loadTransactions(15, 0);
+        // Clear month selection after successful sync
+        this.syncStartMonth.set('');
       },
       error: (err) => {
         this.syncLoading.set(false);
         alert(err.error?.error || 'Failed to sync transactions');
       }
     });
+  }
+
+  // Generate list of months for selector (last 24 months)
+  getAvailableMonths(): string[] {
+    const months: string[] = [];
+    const now = new Date();
+    for (let i = 0; i < 24; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      months.push(`${year}-${month}`);
+    }
+    return months;
+  }
+
+  // Format month for display (e.g., "2024-01" -> "January 2024")
+  formatMonth(monthStr: string): string {
+    const [year, month] = monthStr.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }
 
   logout() {

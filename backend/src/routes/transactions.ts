@@ -11,7 +11,7 @@ import {
 import { budgets, plaidItems, plaidTransactions, plaidAccounts } from '../db/schema';
 import { db } from '../db';
 import { eq, and } from 'drizzle-orm';
-import { syncTransactions } from '../services/plaid';
+import { syncTransactions, getTransactions } from '../services/plaid';
 import { storeTransaction } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
 import { decrypt } from '../utils/encryption';
@@ -175,6 +175,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
     }
 
     const userId = req.userId; // Type narrowing for TypeScript
+    const { startDate } = req.body; // Optional: YYYY-MM-DD format or YYYY-MM format
 
     // Get user's budget
     const [budget] = await db
@@ -197,8 +198,26 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'No Plaid accounts connected' });
     }
 
+    // Parse startDate if provided
+    let historicalStartDate: string | null = null;
+    let historicalEndDate: string = new Date().toISOString().split('T')[0]; // Today
+
+    if (startDate) {
+      // If format is YYYY-MM, convert to YYYY-MM-01 (first day of month)
+      if (/^\d{4}-\d{2}$/.test(startDate)) {
+        historicalStartDate = `${startDate}-01`;
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+        historicalStartDate = startDate;
+      } else {
+        return res.status(400).json({ error: 'Invalid startDate format. Use YYYY-MM or YYYY-MM-DD' });
+      }
+    }
+
     console.log(`\n=== Starting transaction sync for user ${userId} ===`);
     console.log(`User has ${items.length} Plaid item(s) connected`);
+    if (historicalStartDate) {
+      console.log(`Fetching historical transactions from ${historicalStartDate} to ${historicalEndDate}`);
+    }
 
     let totalAdded = 0;
     let totalModified = 0;
@@ -354,11 +373,36 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
         console.log(`\nSyncing transactions for item ${item.id} (${item.institutionName || 'Unknown'})`);
         const decryptedAccessToken = decrypt(item.accessToken);
         
-        let currentCursor = item.transactionsCursor || null;
-        let hasMore = true;
         let itemAdded = 0;
         let itemModified = 0;
         let itemRemoved = 0;
+
+        // If startDate is provided, fetch historical transactions first
+        if (historicalStartDate) {
+          console.log(`  Fetching historical transactions from ${historicalStartDate} to ${historicalEndDate}`);
+          try {
+            const historicalTransactions = await getTransactions(
+              decryptedAccessToken,
+              historicalStartDate,
+              historicalEndDate
+            );
+
+            // Process historical transactions as new transactions
+            for (const tx of historicalTransactions) {
+              itemAdded++;
+              totalAdded++;
+              await processTransaction(tx, true, item);
+            }
+            console.log(`  ✅ Fetched ${historicalTransactions.length} historical transactions`);
+          } catch (histError: any) {
+            console.error(`  ⚠️ Error fetching historical transactions:`, histError.message || histError);
+            // Continue with sync API even if historical fetch fails
+          }
+        }
+
+        // Now sync incremental updates using Sync API
+        let currentCursor = item.transactionsCursor || null;
+        let hasMore = true;
 
         // Continue syncing until all updates are fetched
         while (hasMore) {

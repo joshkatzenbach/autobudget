@@ -23,7 +23,7 @@ export async function createLinkToken(userId: number) {
   const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
   const webhookUrl = `${baseUrl}/api/plaid/webhook`;
 
-  const request = {
+  const request: any = {
     user: {
       client_user_id: userId.toString(),
     },
@@ -31,8 +31,21 @@ export async function createLinkToken(userId: number) {
     products: [Products.Transactions],
     country_codes: [CountryCode.Us],
     language: 'en',
-    webhook: webhookUrl,
+    transactions: {
+      days_requested: 730, // Request up to 2 years of historical transactions (max allowed)
+    },
   };
+
+  // Only include webhook if BASE_URL is set and not localhost
+  // Plaid sandbox may reject localhost webhook URLs
+  // For local development, you can use ngrok or omit the webhook
+  if (baseUrl && !baseUrl.includes('localhost')) {
+    request.webhook = webhookUrl;
+  } else if (process.env.PLAID_ENV === 'production') {
+    // In production, always include webhook (should be HTTPS)
+    request.webhook = webhookUrl;
+  }
+  // In sandbox with localhost, webhook is omitted (can be configured in Plaid Dashboard instead)
 
   try {
     const response = await plaidClient.linkTokenCreate(request);
@@ -108,6 +121,67 @@ export async function getAccountBalances(accessToken: string) {
     return response.data.accounts;
   } catch (error) {
     console.error('Error getting account balances:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get transactions using Plaid's Transactions Get API with date range
+ * Returns all transactions within the specified date range
+ */
+export async function getTransactions(
+  accessToken: string,
+  startDate: string,
+  endDate: string
+): Promise<any[]> {
+  try {
+    // Normalize dates to YYYY-MM-DD format
+    const normalizeDate = (date: string | Date): string => {
+      if (typeof date === 'string') {
+        return date.split('T')[0]; // Remove time component if present
+      }
+      return date.toISOString().split('T')[0];
+    };
+
+    const normalizedStartDate = normalizeDate(startDate);
+    const normalizedEndDate = normalizeDate(endDate);
+
+    const allTransactions: any[] = [];
+    let cursor: string | undefined = undefined;
+    let hasMore = true;
+
+    while (hasMore) {
+      const request: any = {
+        access_token: accessToken,
+        start_date: normalizedStartDate,
+        end_date: normalizedEndDate,
+      };
+
+      if (cursor) {
+        request.cursor = cursor;
+      }
+
+      const response = await plaidClient.transactionsGet(request);
+      const data = response.data;
+
+      if (data.transactions) {
+        allTransactions.push(...data.transactions);
+      }
+
+      // Check for next_cursor property (may be undefined or null)
+      cursor = (data as any).next_cursor;
+      hasMore = !!cursor;
+    }
+
+    console.log(`[GET] Fetched ${allTransactions.length} transactions from ${normalizedStartDate} to ${normalizedEndDate}`);
+    
+    return allTransactions;
+  } catch (error: any) {
+    console.error('Error getting transactions from Plaid:', error);
+    // Log more details if available
+    if (error.response?.data) {
+      console.error('Plaid error details:', JSON.stringify(error.response.data, null, 2));
+    }
     throw error;
   }
 }
