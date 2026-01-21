@@ -62,8 +62,10 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// IMPORTANT: Register Slack interactive webhook BEFORE global body parsers
+// IMPORTANT: Register webhook endpoints BEFORE global body parsers
 // This allows us to capture the raw body for signature verification
+
+// Slack interactive webhook - needs raw body for signature verification
 app.use('/api/slack/interactive', 
   express.urlencoded({ 
     extended: false, 
@@ -71,6 +73,17 @@ app.use('/api/slack/interactive',
       console.log('[DEBUG] Capturing raw body via verify callback, length:', buf.length);
       req.rawBody = buf;
       console.log('[DEBUG] Raw body preview (first 200 chars):', buf.toString('utf8').substring(0, 200));
+    }
+  })
+);
+
+// Plaid webhook - needs raw body for SHA-256 hash verification
+app.use('/api/plaid/webhook',
+  express.json({
+    limit: '10mb',
+    verify: (req: any, res, buf) => {
+      // Store raw body for SHA-256 hash calculation
+      req.rawBody = buf;
     }
   })
 );

@@ -19,7 +19,8 @@ ENCRYPTION_KEY=your-64-character-hex-encoded-encryption-key-here
 PLAID_CLIENT_ID=your-plaid-client-id
 PLAID_SECRET=your-plaid-secret
 PLAID_ENV=sandbox
-PLAID_WEBHOOK_VERIFICATION_KEY=your-plaid-webhook-verification-key
+# Note: Webhook verification now uses JWT-based verification and automatically
+# fetches verification keys from Plaid's API. No separate webhook key needed.
 
 # Slack Configuration
 SLACK_CLIENT_ID=your-slack-client-id
@@ -44,7 +45,7 @@ BASE_URL=http://localhost:3000
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ```
   This will output a 64-character hex string that you should use as your `ENCRYPTION_KEY`. **Keep this key secure and never commit it to version control.**
-- **Plaid Webhook Verification Key**: Get this from your Plaid Dashboard under Webhooks settings. This key is used to verify that webhook requests are actually from Plaid. **Required in production.**
+- **Plaid Webhook Verification**: Webhook verification is now handled automatically using JWT-based verification. The system fetches verification keys from Plaid's API as needed. No separate webhook verification key environment variable is required.
 - **Slack Credentials**: Get these from your Slack App settings (https://api.slack.com/apps):
   - `SLACK_CLIENT_ID`: Your Slack App Client ID (found in "Basic Information" → "App Credentials")
   - `SLACK_CLIENT_SECRET`: Your Slack App Client Secret (found in "Basic Information" → "App Credentials")

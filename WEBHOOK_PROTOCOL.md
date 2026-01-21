@@ -13,9 +13,12 @@ When Plaid sends a `SYNC_UPDATES_AVAILABLE` webhook, the system processes it asy
 **Endpoint:** `POST /api/plaid/webhook`
 
 **Steps:**
-1. **Verification**: Webhook is verified using `Plaid-Webhook-Verification-Key` header
-   - In production: Verification key is required
-   - In development: Missing key is logged but allowed through
+1. **Verification**: Webhook is verified using JWT-based verification (Plaid-Verification header)
+   - Extracts JWT from `Plaid-Verification` header
+   - Fetches verification key (JWK) from Plaid's `/webhook_verification_key/get` API
+   - Verifies JWT signature, timestamp (max 5 min old), and body SHA-256 hash
+   - In production: Verification is required
+   - In development: Missing header is logged but allowed through
 
 2. **Immediate Storage**: Webhook payload is stored in `plaid_webhooks` table
    ```sql
