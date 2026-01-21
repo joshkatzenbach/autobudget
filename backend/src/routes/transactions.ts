@@ -8,9 +8,9 @@ import {
   generateMonthlySummary,
   getMonthlySummaries,
 } from '../services/transactions';
-import { budgets, plaidItems, plaidTransactions, plaidAccounts } from '../db/schema';
+import { budgets, plaidItems, plaidTransactions, plaidAccounts, transactionCategories } from '../db/schema';
 import { db } from '../db';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { syncTransactions, getTransactions } from '../services/plaid';
 import { storeTransaction } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
@@ -474,6 +474,52 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     console.error('Error syncing transactions:', error);
     res.status(500).json({ error: 'Failed to sync transactions' });
+  }
+});
+
+// Admin endpoint: Delete all transactions for the authenticated user
+router.delete('/admin/all', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const userId = req.userId;
+
+    // Delete transaction categories first (they cascade, but being explicit)
+    // Get all transaction IDs for this user
+    const userTransactions = await db
+      .select({ id: plaidTransactions.id })
+      .from(plaidTransactions)
+      .where(eq(plaidTransactions.userId, userId));
+
+    const transactionIds = userTransactions.map(tx => tx.id);
+
+    if (transactionIds.length > 0) {
+      // Delete transaction categories (cascade will handle this, but being explicit)
+      await db
+        .delete(transactionCategories)
+        .where(inArray(transactionCategories.transactionId, transactionIds));
+    }
+
+    // Delete all transactions for this user
+    // transactionCategories will cascade delete automatically
+    await db
+      .delete(plaidTransactions)
+      .where(eq(plaidTransactions.userId, userId));
+
+    const deletedCount = userTransactions.length;
+
+    console.log(`Admin: Deleted ${deletedCount} transactions for user ${userId}`);
+
+    res.json({
+      success: true,
+      message: `Deleted ${deletedCount} transactions`,
+      deletedCount
+    });
+  } catch (error: any) {
+    console.error('Error deleting all transactions:', error);
+    res.status(500).json({ error: 'Failed to delete transactions' });
   }
 });
 

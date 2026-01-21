@@ -1,0 +1,30 @@
+<div class="admin-container">
+  <div class="admin-card">
+    <h1>Admin Panel</h1>
+    
+    @if (error()) {
+      <div class="error-message">{{ error() }}</div>
+    }
+
+    @if (success()) {
+      <div class="success-message">{{ success() }}</div>
+    }
+
+    <div class="admin-section">
+      <h2>Transaction Management</h2>
+      <p class="warning-text">
+        ⚠️ Warning: Deleting all transactions is a destructive operation that cannot be undone.
+        This will remove all transaction data and category assignments.
+      </p>
+      
+      <button 
+        type="button" 
+        class="btn-danger"
+        (click)="deleteAllTransactions()"
+        [disabled]="loading()">
+        {{ loading() ? 'Deleting...' : 'Delete All Transactions' }}
+      </button>
+    </div>
+  </div>
+</div>
+

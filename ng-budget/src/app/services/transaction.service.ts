@@ -64,5 +64,9 @@ export class TransactionService {
     }
     return this.api.post(`/transactions/sync`, body);
   }
+
+  deleteAllTransactions(): Observable<{ success: boolean; message: string; deletedCount: number }> {
+    return this.api.delete<{ success: boolean; message: string; deletedCount: number }>('/transactions/admin/all');
+  }
 }
 
