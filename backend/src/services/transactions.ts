@@ -5,7 +5,7 @@ import { eq, and, desc, asc, gte, lte, sql, inArray, isNull } from 'drizzle-orm'
 export interface TransactionWithCategories {
   id: number;
   userId: number;
-  itemId: number;
+  itemId: number | null;
   accountId: string;
   transactionId: string;
   amount: string;

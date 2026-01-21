@@ -109,7 +109,7 @@ export interface UpdateBudgetCategoryRequest {
 export interface Transaction {
   id: number;
   userId: number;
-  itemId: number;
+  itemId: number | null;
   accountId: string;
   transactionId: string;
   amount: string;
