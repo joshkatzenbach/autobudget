@@ -48,7 +48,8 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
     res.status(200).json({ received: true });
 
     // Handle webhook asynchronously
-    if (webhook_type === 'SYNC_UPDATES_AVAILABLE') {
+    // Check webhook_code for SYNC_UPDATES_AVAILABLE (webhook_type is "TRANSACTIONS" for transaction webhooks)
+    if (webhook_code === 'SYNC_UPDATES_AVAILABLE') {
       // Find Plaid item in database
       const [plaidItem] = await db
         .select()

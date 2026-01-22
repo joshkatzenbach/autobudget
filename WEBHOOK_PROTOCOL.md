@@ -40,9 +40,9 @@ When Plaid sends a `SYNC_UPDATES_AVAILABLE` webhook, the system processes it asy
 
 Processing happens **after** the response is sent, so Plaid doesn't wait.
 
-#### 2.1 Webhook Type Check
+#### 2.1 Webhook Code Check
 
-Only `SYNC_UPDATES_AVAILABLE` webhooks are processed. Other types are:
+Only webhooks with `webhook_code === 'SYNC_UPDATES_AVAILABLE'` are processed. Note that for transaction webhooks, `webhook_type` will be `"TRANSACTIONS"` and `webhook_code` will be `"SYNC_UPDATES_AVAILABLE"`. Other webhook codes are:
 - Stored in database
 - Marked as processed with error message: `"Unhandled webhook type: {type}"`
 - Logged but not acted upon
