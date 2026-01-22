@@ -6,8 +6,12 @@ import compare from 'secure-compare';
 import { plaidClient } from '../services/plaid';
 
 // Cache for webhook verification keys (JWKs)
-// Key: key_id (kid), Value: JWK
-const keyCache = new Map<string, jose.JWK>();
+// Key: key_id (kid), Value: JWK (with Plaid-specific fields)
+type PlaidJWK = jose.JWK & {
+  expired_at?: number | null;
+  created_at?: number;
+};
+const keyCache = new Map<string, PlaidJWK>();
 
 /**
  * Verify Plaid webhook using JWT-based verification
@@ -59,7 +63,7 @@ export async function verifyPlaidWebhook(req: Request, res: Response, next: Next
     }
 
     // Get or fetch the verification key (JWK)
-    let jwk: jose.JWK;
+    let jwk: PlaidJWK;
     if (keyCache.has(keyId)) {
       jwk = keyCache.get(keyId)!;
     } else {
@@ -68,7 +72,7 @@ export async function verifyPlaidWebhook(req: Request, res: Response, next: Next
         const response = await plaidClient.webhookVerificationKeyGet({
           key_id: keyId,
         });
-        jwk = response.data.key;
+        jwk = response.data.key as PlaidJWK;
         
         // Cache the key (check expiration if provided)
         if (jwk.expired_at && jwk.expired_at * 1000 < Date.now()) {
