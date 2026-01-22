@@ -2,6 +2,8 @@ export type FilingStatus = 'single' | 'married-jointly' | 'married-separately' |
 
 export type CategoryType = 'fixed' | 'savings' | 'variable' | 'surplus' | 'excluded';
 
+export type AutoSurplusDestination = 'rollover' | 'savings' | null;
+
 export interface Budget {
   id: number;
   userId: number;
@@ -25,16 +27,11 @@ export interface BudgetCategory {
   allocatedAmount: string;
   spentAmount: string;
   categoryType: CategoryType;
-  accumulatedTotal?: string;
-  billCount?: number | null;
-  thresholdAmount?: string | null;
-  goalLimit?: string | null;
+  rolloverBalance?: string; // Rollover balance for variable/fixed, total for savings
   color?: string | null;
-  // Variable category fields
-  autoMoveSurplus?: boolean;
+  // Variable category fields - surplus handling
+  autoSurplusDestination?: AutoSurplusDestination;
   surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -69,13 +66,11 @@ export interface CreateBudgetCategoryRequest {
   name: string;
   allocatedAmount: string;
   categoryType?: CategoryType;
-  accumulatedTotal?: string;
+  rolloverBalance?: string;
   color?: string | null;
-  // Variable category fields
-  autoMoveSurplus?: boolean;
+  // Variable category fields - surplus handling
+  autoSurplusDestination?: AutoSurplusDestination;
   surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -90,13 +85,11 @@ export interface UpdateBudgetCategoryRequest {
   allocatedAmount?: string;
   spentAmount?: string;
   categoryType?: CategoryType;
-  accumulatedTotal?: string;
+  rolloverBalance?: string;
   color?: string | null;
-  // Variable category fields
-  autoMoveSurplus?: boolean;
+  // Variable category fields - surplus handling
+  autoSurplusDestination?: AutoSurplusDestination;
   surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -138,6 +131,25 @@ export interface TransactionWithCategories extends Transaction {
   categories: TransactionCategory[];
 }
 
+// New monthly snapshot interface (replaces MonthlyCategorySummary for most uses)
+export interface MonthlySnapshot {
+  id: number;
+  userId: number;
+  budgetId: number;
+  categoryId: number;
+  year: number;
+  month: number;
+  allotment: string;
+  spent: string;
+  surplusGiven: string;
+  deficitReceived: string;
+  finalRolloverBalance: string;
+  isLocked: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Legacy - kept for backwards compatibility
 export interface MonthlyCategorySummary {
   id: number;
   userId: number;
@@ -159,13 +171,17 @@ export interface FundMovement {
   fromCategoryId: number | null;
   toCategoryId: number | null;
   amount: string;
-  movementType: 'surplus' | 'deficit';
-  variableCategoryId: number;
+  transferType: string; // 'surplus_to_savings', 'surplus_to_rollover', 'cover_deficit', etc.
+  sourceType: string; // 'surplus', 'rollover', 'savings'
+  relatedCategoryId: number | null;
+  isAutomatic: boolean;
   month: number;
   year: number;
+  description?: string | null;
   createdAt: string;
 }
 
+// Legacy - kept for backwards compatibility with analytics
 export interface SavingsSnapshot {
   id: number;
   userId: number;
@@ -176,4 +192,3 @@ export interface SavingsSnapshot {
   accumulatedTotal: string;
   createdAt: string;
 }
-

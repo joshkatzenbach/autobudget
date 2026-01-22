@@ -227,19 +227,19 @@
                             
                             <div class="form-group">
                               <label>
-                                Accumulated Total ($)
-                                <mat-icon matTooltip="The current total amount saved in this category year-to-date. This is the starting balance for tracking your savings progress." matTooltipPosition="above" class="info-icon">info</mat-icon>
+                                Current Balance ($)
+                                <mat-icon matTooltip="The current total amount in this savings account. This will be increased by your monthly allotment and decreased by any transactions." matTooltipPosition="above" class="info-icon">info</mat-icon>
                               </label>
                               <input 
                                 type="number" 
-                                [ngModel]="parseAmount(category.accumulatedTotal || '0')" 
-                                (ngModelChange)="category.accumulatedTotal = ($event !== null && $event !== undefined) ? $event.toString() : '0'"
-                                name="catAccum{{$index}}" 
+                                [ngModel]="parseAmount(category.rolloverBalance || '0')" 
+                                (ngModelChange)="category.rolloverBalance = ($event !== null && $event !== undefined) ? $event.toString() : '0'"
+                                name="catRollover{{$index}}" 
                                 step="0.01" 
                                 min="0" 
                                 [disabled]="loading()" 
                               />
-                              <small class="help-text">Current total saved in this category (year-to-date)</small>
+                              <small class="help-text">Current total saved in this account</small>
                             </div>
 
                             <div class="form-group">
@@ -297,22 +297,44 @@
                         <!-- Variable Category Fields -->
                         @if (category.categoryType === 'variable') {
                           <div class="category-settings-section">
-                            <h4>Month-End Settings</h4>
+                            <h4>Month-End Surplus Settings</h4>
                             
                             <div class="form-group">
-                              <label class="checkbox-label">
-                                <input 
-                                  type="checkbox" 
-                                  [(ngModel)]="category.autoMoveSurplus" 
-                                  name="catAutoMoveSurplus{{$index}}"
-                                  [disabled]="loading()"
-                                />
-                                <span>
-                                  Auto-move surplus at month end
-                                  <mat-icon matTooltip="If enabled, any money left over in this category at the end of the month will automatically be moved to the selected savings category. If disabled, you'll be prompted via Slack to choose where to move it." matTooltipPosition="above" class="info-icon">info</mat-icon>
-                                </span>
+                              <label>
+                                Rollover Balance ($)
+                                <mat-icon matTooltip="The current rollover balance for this category. This carries forward month-to-month and can be used to cover deficits." matTooltipPosition="above" class="info-icon">info</mat-icon>
                               </label>
-                              @if (category.autoMoveSurplus) {
+                              <input 
+                                type="number" 
+                                [ngModel]="parseAmount(category.rolloverBalance || '0')" 
+                                (ngModelChange)="category.rolloverBalance = ($event !== null && $event !== undefined) ? $event.toString() : '0'"
+                                name="catRollover{{$index}}" 
+                                step="0.01"
+                                [disabled]="loading()" 
+                              />
+                              <small class="help-text">Current rollover balance (can be negative)</small>
+                            </div>
+
+                            <div class="form-group">
+                              <label>
+                                Automatic Surplus Destination
+                                <mat-icon matTooltip="Choose what happens to leftover money in this category at month-end. You can add it to rollover, send it to a savings account, or be asked each month." matTooltipPosition="above" class="info-icon">info</mat-icon>
+                              </label>
+                              <select 
+                                [(ngModel)]="category.autoSurplusDestination" 
+                                name="catAutoSurplusDest{{$index}}"
+                                [disabled]="loading()"
+                                class="category-select">
+                                <option [ngValue]="null">Ask me each month</option>
+                                <option value="rollover">Add to Rollover Account</option>
+                                <option value="savings">Move to Savings Account</option>
+                              </select>
+                              <small class="help-text">Deficits are always covered from rollover first, then you'll be asked via Slack</small>
+                            </div>
+
+                            @if (category.autoSurplusDestination === 'savings') {
+                              <div class="form-group">
+                                <label>Target Savings Account</label>
                                 <select 
                                   [(ngModel)]="category.surplusTargetCategoryId" 
                                   name="catSurplusTarget{{$index}}"
@@ -323,35 +345,8 @@
                                     <option [ngValue]="savingsCat.id">{{ savingsCat.name }}</option>
                                   }
                                 </select>
-                              }
-                            </div>
-
-                            <div class="form-group">
-                              <label class="checkbox-label">
-                                <input 
-                                  type="checkbox" 
-                                  [(ngModel)]="category.autoMoveDeficit" 
-                                  name="catAutoMoveDeficit{{$index}}"
-                                  [disabled]="loading()"
-                                />
-                                <span>
-                                  Auto-move deficit at month end
-                                  <mat-icon matTooltip="If enabled, if you overspend in this category, money will automatically be taken from the selected savings category to cover the deficit. If disabled, you'll be prompted via Slack to choose where to take it from." matTooltipPosition="above" class="info-icon">info</mat-icon>
-                                </span>
-                              </label>
-                              @if (category.autoMoveDeficit) {
-                                <select 
-                                  [(ngModel)]="category.deficitSourceCategoryId" 
-                                  name="catDeficitSource{{$index}}"
-                                  [disabled]="loading()"
-                                  class="category-select">
-                                  <option [ngValue]="null">Select savings category...</option>
-                                  @for (savingsCat of getSavingsCategories(); track savingsCat.id) {
-                                    <option [ngValue]="savingsCat.id">{{ savingsCat.name }}</option>
-                                  }
-                                </select>
-                              }
-                            </div>
+                              </div>
+                            }
                           </div>
                         }
 

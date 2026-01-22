@@ -7,7 +7,9 @@ import {
   CreateBudgetRequest,
   UpdateBudgetRequest,
   CreateBudgetCategoryRequest,
-  UpdateBudgetCategoryRequest
+  UpdateBudgetCategoryRequest,
+  MonthlySnapshot,
+  FundMovement
 } from '../models/budget.model';
 
 @Injectable({
@@ -55,6 +57,15 @@ export class BudgetService {
     return this.api.delete<void>(`/budgets/categories/${categoryId}`);
   }
 
+  // New monthly snapshots endpoint
+  getMonthlySnapshots(categoryId?: number): Observable<MonthlySnapshot[]> {
+    const params: any = {};
+    if (categoryId) params.categoryId = categoryId;
+    const queryString = new URLSearchParams(params).toString();
+    return this.api.get<MonthlySnapshot[]>(`/budgets/monthly-snapshots${queryString ? '?' + queryString : ''}`);
+  }
+
+  // Legacy - kept for backwards compatibility
   getSavingsSnapshots(categoryId?: number): Observable<any[]> {
     const params: any = {};
     if (categoryId) params.categoryId = categoryId;
@@ -62,8 +73,8 @@ export class BudgetService {
     return this.api.get<any[]>(`/budgets/savings-snapshots${queryString ? '?' + queryString : ''}`);
   }
 
-  getFundMovements(): Observable<any[]> {
-    return this.api.get<any[]>('/budgets/fund-movements');
+  getFundMovements(): Observable<FundMovement[]> {
+    return this.api.get<FundMovement[]>('/budgets/fund-movements');
   }
 
   processMonthEnd(year: number, month: number): Observable<any> {

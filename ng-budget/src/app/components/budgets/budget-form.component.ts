@@ -6,7 +6,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatIconModule } from '@angular/material/icon';
 import { BudgetService } from '../../services/budget.service';
 import { TransactionService } from '../../services/transaction.service';
-import { CreateBudgetRequest, CreateBudgetCategoryRequest, UpdateBudgetCategoryRequest, FilingStatus, CategoryType, Budget, BudgetCategory } from '../../models/budget.model';
+import { CreateBudgetRequest, CreateBudgetCategoryRequest, UpdateBudgetCategoryRequest, FilingStatus, CategoryType, Budget, BudgetCategory, AutoSurplusDestination } from '../../models/budget.model';
 import { calculateTax, getStandardDeduction, FilingStatus as TaxFilingStatus } from '../../utils/tax-calculator';
 
 interface CategoryForm {
@@ -15,13 +15,11 @@ interface CategoryForm {
   allocatedAmount: string;
   allocatedAmountPeriod: 'monthly' | 'annual'; // Whether allocatedAmount is monthly or annual
   categoryType: CategoryType;
-  accumulatedTotal: string;
+  rolloverBalance: string;
   color: string | null;
-  // Variable category fields
-  autoMoveSurplus?: boolean;
+  // Variable category fields - surplus handling
+  autoSurplusDestination?: AutoSurplusDestination;
   surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -143,13 +141,11 @@ export class BudgetFormComponent implements OnInit {
             allocatedAmount: cat.allocatedAmount,
             allocatedAmountPeriod: 'monthly' as 'monthly' | 'annual', // Default to monthly, could be enhanced to detect
             categoryType: cat.categoryType,
-            accumulatedTotal: cat.accumulatedTotal || '0',
+            rolloverBalance: cat.rolloverBalance || '0',
             color: cat.color || this.getNextAvailableColor(),
-            // Variable category fields
-            autoMoveSurplus: cat.autoMoveSurplus || false,
+            // Variable category fields - surplus handling
+            autoSurplusDestination: cat.autoSurplusDestination || null,
             surplusTargetCategoryId: cat.surplusTargetCategoryId || null,
-            autoMoveDeficit: cat.autoMoveDeficit || false,
-            deficitSourceCategoryId: cat.deficitSourceCategoryId || null,
             // Fixed category fields
             expectedMerchantName: cat.expectedMerchantName || null,
             hideFromTransactionLists: cat.hideFromTransactionLists || false,
@@ -414,12 +410,10 @@ export class BudgetFormComponent implements OnInit {
         allocatedAmount: '',
         allocatedAmountPeriod: 'monthly',
         categoryType: 'variable',
-        accumulatedTotal: '0',
+        rolloverBalance: '0',
         color: this.getNextAvailableColor(),
-        autoMoveSurplus: false,
+        autoSurplusDestination: null,
         surplusTargetCategoryId: null,
-        autoMoveDeficit: false,
-        deficitSourceCategoryId: null,
         expectedMerchantName: null,
         hideFromTransactionLists: false,
         isTaxDeductible: false,
@@ -441,7 +435,7 @@ export class BudgetFormComponent implements OnInit {
           allocatedAmount: remaining.toFixed(2),
           allocatedAmountPeriod: 'monthly',
           categoryType: 'surplus',
-          accumulatedTotal: '0',
+          rolloverBalance: '0',
           color: '#28a745'
         }
       ]);
@@ -674,8 +668,15 @@ export class BudgetFormComponent implements OnInit {
               name: cat.name,
               allocatedAmount: cat.allocatedAmount,
               categoryType: cat.categoryType,
-              accumulatedTotal: cat.accumulatedTotal,
-              color: cat.color || null
+              rolloverBalance: cat.rolloverBalance,
+              color: cat.color || null,
+              autoSurplusDestination: cat.autoSurplusDestination || null,
+              surplusTargetCategoryId: cat.surplusTargetCategoryId || null,
+              expectedMerchantName: cat.expectedMerchantName || null,
+              hideFromTransactionLists: cat.hideFromTransactionLists || false,
+              isTaxDeductible: cat.isTaxDeductible || false,
+              isSubjectToFica: cat.isSubjectToFica || false,
+              isUnconnectedAccount: cat.isUnconnectedAccount || false,
             };
 
             await this.budgetService.createBudgetCategory(categoryData).toPromise();
@@ -723,13 +724,11 @@ export class BudgetFormComponent implements OnInit {
         const categoryData: UpdateBudgetCategoryRequest = {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
-          accumulatedTotal: cat.accumulatedTotal || '0',
+          rolloverBalance: cat.rolloverBalance || '0',
           color: cat.color || null,
-          autoMoveSurplus: cat.autoMoveSurplus ?? false,
-          surplusTargetCategoryId: cat.surplusTargetCategoryId ?? null,
-          autoMoveDeficit: cat.autoMoveDeficit ?? false,
-          deficitSourceCategoryId: cat.deficitSourceCategoryId ?? null,
-          expectedMerchantName: cat.expectedMerchantName ?? null,
+          autoSurplusDestination: cat.autoSurplusDestination || null,
+          surplusTargetCategoryId: cat.surplusTargetCategoryId || null,
+          expectedMerchantName: cat.expectedMerchantName || null,
           hideFromTransactionLists: cat.hideFromTransactionLists ?? false,
           isTaxDeductible: cat.isTaxDeductible ?? false,
           isSubjectToFica: cat.isSubjectToFica ?? false,
@@ -743,13 +742,11 @@ export class BudgetFormComponent implements OnInit {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
           categoryType: cat.categoryType,
-          accumulatedTotal: cat.accumulatedTotal || '0',
+          rolloverBalance: cat.rolloverBalance || '0',
           color: cat.color || null,
-          autoMoveSurplus: cat.autoMoveSurplus ?? false,
-          surplusTargetCategoryId: cat.surplusTargetCategoryId ?? null,
-          autoMoveDeficit: cat.autoMoveDeficit ?? false,
-          deficitSourceCategoryId: cat.deficitSourceCategoryId ?? null,
-          expectedMerchantName: cat.expectedMerchantName ?? null,
+          autoSurplusDestination: cat.autoSurplusDestination || null,
+          surplusTargetCategoryId: cat.surplusTargetCategoryId || null,
+          expectedMerchantName: cat.expectedMerchantName || null,
           hideFromTransactionLists: cat.hideFromTransactionLists ?? false,
           isTaxDeductible: cat.isTaxDeductible ?? false,
           isSubjectToFica: cat.isSubjectToFica ?? false,
