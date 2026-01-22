@@ -11,14 +11,14 @@ const SYSTEM_CATEGORIES = {
     name: 'Surplus',
     categoryType: 'surplus',
     allocatedAmount: '0',
-    accumulatedTotal: '0',
+    rolloverBalance: '0',
     color: '#28a745'
   },
   EXCLUDED: {
     name: 'Excluded',
     categoryType: 'excluded',
     allocatedAmount: '0',
-    accumulatedTotal: '0',
+    rolloverBalance: '0',
     color: '#6c757d'
   }
 };
@@ -172,13 +172,11 @@ export async function createBudgetCategory(
   name: string,
   allocatedAmount: string,
   categoryType?: string,
-  accumulatedTotal?: string,
+  rolloverBalance?: string,
   color?: string | null,
-  // Variable category fields
-  autoMoveSurplus?: boolean,
+  // Variable category fields - surplus handling
+  autoSurplusDestination?: string | null, // 'rollover', 'savings', or null (ask each month)
   surplusTargetCategoryId?: number | null,
-  autoMoveDeficit?: boolean,
-  deficitSourceCategoryId?: number | null,
   // Fixed category fields
   expectedMerchantName?: string | null,
   hideFromTransactionLists?: boolean,
@@ -205,12 +203,10 @@ export async function createBudgetCategory(
       allocatedAmount,
       spentAmount: '0',
       categoryType: categoryType || 'variable',
-      accumulatedTotal: accumulatedTotal || '0',
+      rolloverBalance: rolloverBalance || '0',
       color: color || null,
-      autoMoveSurplus: autoMoveSurplus || false,
+      autoSurplusDestination: autoSurplusDestination || null,
       surplusTargetCategoryId: surplusTargetCategoryId || null,
-      autoMoveDeficit: autoMoveDeficit || false,
-      deficitSourceCategoryId: deficitSourceCategoryId || null,
       expectedMerchantName: expectedMerchantName || null,
       hideFromTransactionLists: hideFromTransactionLists || false,
       isTaxDeductible: isTaxDeductible || false,
@@ -266,12 +262,10 @@ export async function getBudgetCategories(userId: number): Promise<Array<{
   allocatedAmount: string;
   spentAmount: string;
   categoryType: string;
-  accumulatedTotal: string;
+  rolloverBalance: string;
   color: string | null;
-  autoMoveSurplus: boolean;
+  autoSurplusDestination: string | null;
   surplusTargetCategoryId: number | null;
-  autoMoveDeficit: boolean;
-  deficitSourceCategoryId: number | null;
   expectedMerchantName: string | null;
   hideFromTransactionLists: boolean;
   isTaxDeductible: boolean;
@@ -347,13 +341,11 @@ export async function updateBudgetCategory(
     allocatedAmount?: string;
     spentAmount?: string;
     categoryType?: string;
-    accumulatedTotal?: string;
+    rolloverBalance?: string;
     color?: string | null;
-    // Variable category fields
-    autoMoveSurplus?: boolean;
+    // Variable category fields - surplus handling
+    autoSurplusDestination?: string | null;
     surplusTargetCategoryId?: number | null;
-    autoMoveDeficit?: boolean;
-    deficitSourceCategoryId?: number | null;
     // Fixed category fields
     expectedMerchantName?: string | null;
     hideFromTransactionLists?: boolean;

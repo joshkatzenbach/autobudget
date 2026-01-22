@@ -865,61 +865,197 @@ router.post('/interactive',
                   console.error(`Error marking transaction ${transactionId} as reviewed:`, error);
                 }
               }
-              } else if (action.action_id === 'variable_surplus_move' || action.action_id === 'variable_deficit_move') {
-                // Handle Variable category surplus/deficit movement
-                // value format: move_{surplus|deficit}_{variableCategoryId}_{targetCategoryId}_{year}_{month}_{amount}
+              } else if (action.action_id?.startsWith('cover_deficit_')) {
+                // Handle deficit coverage from month-end flow
+                // value format: deficit_{deficitCategoryId}_{sourceCategoryId}_{sourceType}_{amount}_{year}_{month}
                 const valueParts = action.value?.split('_') || [];
                 if (valueParts.length >= 7) {
-                  const movementType = valueParts[1] as 'surplus' | 'deficit';
-                  const variableCategoryId = parseInt(valueParts[2]);
-                  const targetCategoryId = parseInt(valueParts[3]);
-                  const year = parseInt(valueParts[4]);
-                  const month = parseInt(valueParts[5]);
-                  const amount = parseFloat(valueParts[6]);
+                  const deficitCategoryId = parseInt(valueParts[1]);
+                  const sourceCategoryId = parseInt(valueParts[2]);
+                  const sourceType = valueParts[3];
+                  const amount = parseFloat(valueParts[4]);
+                  const year = parseInt(valueParts[5]);
+                  const month = parseInt(valueParts[6]);
 
-                  if (!isNaN(variableCategoryId) && !isNaN(targetCategoryId) && !isNaN(amount)) {
-                    // Get userId from Slack user ID via OAuth
-                    const [oauth] = await db
-                      .select()
-                      .from(slackOAuth)
-                      .where(eq(slackOAuth.botUserId, payload.user.id))
+                  // Find user by notification channel
+                  const [oauth] = await db
+                    .select()
+                    .from(slackOAuth)
+                    .where(eq(slackOAuth.notificationGroupDMChannelId, payload.channel?.id || ''))
+                    .limit(1);
+
+                  if (oauth) {
+                    const { recordTransfer, continueMonthEndFlow } = await import('../services/slack-notifications');
+                    const { updateSlackMessage } = await import('../services/slack-notifications');
+
+                    // Get category names
+                    const [deficitCat] = await db
+                      .select({ name: budgetCategories.name })
+                      .from(budgetCategories)
+                      .where(eq(budgetCategories.id, deficitCategoryId))
+                      .limit(1);
+                    const [sourceCat] = await db
+                      .select({ name: budgetCategories.name })
+                      .from(budgetCategories)
+                      .where(eq(budgetCategories.id, sourceCategoryId))
                       .limit(1);
 
-                    if (oauth) {
-                      const { processVariableMovement } = await import('../services/month-end');
-                      await processVariableMovement(
-                        oauth.userId,
-                        variableCategoryId,
-                        targetCategoryId,
-                        movementType,
-                        amount,
-                        year,
-                        month
-                      );
+                    await recordTransfer(
+                      oauth.userId,
+                      sourceCategoryId,
+                      deficitCategoryId,
+                      amount,
+                      'cover_deficit',
+                      sourceType,
+                      year,
+                      month,
+                      `${deficitCat?.name || 'Unknown'}: $${amount.toFixed(2)} deficit covered from ${sourceCat?.name || 'Unknown'}`
+                    );
 
-                      // Update message to show confirmation
-                      const accessToken = await getUserAccessToken(oauth.userId);
-                      if (accessToken && payload.message) {
-                        const slackClient = createSlackClient(accessToken);
-                        const updatedText = movementType === 'surplus'
-                          ? `✅ Surplus of $${amount.toFixed(2)} moved to selected category.`
-                          : `✅ Deficit of $${amount.toFixed(2)} covered from selected category.`;
+                    // Update message
+                    const accessToken = await getUserAccessToken(oauth.userId);
+                    if (accessToken && payload.message) {
+                      const slackClient = createSlackClient(accessToken);
+                      const updatedText = `✅ Deficit of $${amount.toFixed(2)} covered from ${sourceCat?.name || 'selected category'}.`;
 
-                        await slackClient.chat.update({
-                          channel: payload.channel?.id || payload.message.channel,
-                          ts: payload.message.ts,
-                          text: updatedText,
-                          blocks: [
-                            {
-                              type: 'section',
-                              text: {
-                                type: 'mrkdwn',
-                                text: updatedText
-                              }
-                            }
-                          ] as any
-                        });
-                      }
+                      await slackClient.chat.update({
+                        channel: payload.channel?.id || payload.message.channel,
+                        ts: payload.message.ts,
+                        text: updatedText,
+                        blocks: [
+                          {
+                            type: 'section',
+                            text: { type: 'mrkdwn', text: updatedText }
+                          }
+                        ] as any
+                      });
+                    }
+
+                    // Continue flow
+                    await continueMonthEndFlow(oauth.userId, year, month);
+                  }
+                }
+              } else if (action.action_id === 'surplus_to_rollover' || action.action_id?.startsWith('surplus_to_')) {
+                // Handle surplus allocation from month-end flow
+                // value format: surplus_{surplusCategoryId}_{destination}_{amount}_{year}_{month}
+                // destination is 'rollover' or a categoryId
+                const valueParts = action.value?.split('_') || [];
+                if (valueParts.length >= 6) {
+                  const surplusCategoryId = parseInt(valueParts[1]);
+                  const destination = valueParts[2];
+                  const amount = parseFloat(valueParts[3]);
+                  const year = parseInt(valueParts[4]);
+                  const month = parseInt(valueParts[5]);
+
+                  const [oauth] = await db
+                    .select()
+                    .from(slackOAuth)
+                    .where(eq(slackOAuth.notificationGroupDMChannelId, payload.channel?.id || ''))
+                    .limit(1);
+
+                  if (oauth) {
+                    const { recordTransfer, continueMonthEndFlow } = await import('../services/slack-notifications');
+
+                    const [surplusCat] = await db
+                      .select({ name: budgetCategories.name, rolloverBalance: budgetCategories.rolloverBalance })
+                      .from(budgetCategories)
+                      .where(eq(budgetCategories.id, surplusCategoryId))
+                      .limit(1);
+
+                    let destinationName = 'Rollover';
+                    let destinationCategoryId = surplusCategoryId;
+                    let transferType = 'surplus_to_rollover';
+
+                    if (destination !== 'rollover') {
+                      destinationCategoryId = parseInt(destination);
+                      const [destCat] = await db
+                        .select({ name: budgetCategories.name })
+                        .from(budgetCategories)
+                        .where(eq(budgetCategories.id, destinationCategoryId))
+                        .limit(1);
+                      destinationName = destCat?.name || 'Unknown';
+                      transferType = 'surplus_to_savings';
+                    }
+
+                    await recordTransfer(
+                      oauth.userId,
+                      surplusCategoryId,
+                      destinationCategoryId,
+                      amount,
+                      transferType,
+                      'surplus',
+                      year,
+                      month,
+                      `${surplusCat?.name || 'Unknown'}: $${amount.toFixed(2)} surplus moved to ${destinationName}`
+                    );
+
+                    // Update message
+                    const accessToken = await getUserAccessToken(oauth.userId);
+                    if (accessToken && payload.message) {
+                      const slackClient = createSlackClient(accessToken);
+                      const updatedText = `✅ Surplus of $${amount.toFixed(2)} moved to ${destinationName}.`;
+
+                      await slackClient.chat.update({
+                        channel: payload.channel?.id || payload.message.channel,
+                        ts: payload.message.ts,
+                        text: updatedText,
+                        blocks: [
+                          {
+                            type: 'section',
+                            text: { type: 'mrkdwn', text: updatedText }
+                          }
+                        ] as any
+                      });
+                    }
+
+                    // Continue flow
+                    await continueMonthEndFlow(oauth.userId, year, month);
+                  }
+                }
+              } else if (action.action_id === 'lock_month') {
+                // Handle lock month button
+                // value format: lock_{year}_{month}
+                const valueParts = action.value?.split('_') || [];
+                if (valueParts.length >= 3) {
+                  const year = parseInt(valueParts[1]);
+                  const month = parseInt(valueParts[2]);
+
+                  const [oauth] = await db
+                    .select()
+                    .from(slackOAuth)
+                    .where(eq(slackOAuth.notificationGroupDMChannelId, payload.channel?.id || ''))
+                    .limit(1);
+
+                  if (oauth) {
+                    const { lockMonth } = await import('../services/month-end');
+                    await lockMonth(oauth.userId, year, month);
+
+                    const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+
+                    // Update message
+                    const accessToken = await getUserAccessToken(oauth.userId);
+                    if (accessToken && payload.message) {
+                      const slackClient = createSlackClient(accessToken);
+                      
+                      // Keep existing blocks but remove the lock button and add confirmation
+                      const updatedBlocks = payload.message.blocks
+                        ? payload.message.blocks.filter((block: any) => block.type !== 'actions')
+                        : [];
+                      
+                      updatedBlocks.push({
+                        type: 'section',
+                        text: {
+                          type: 'mrkdwn',
+                          text: `🔒 *${monthName} ${year} values locked in!*\nMonthly snapshots have been created.`
+                        }
+                      });
+
+                      await slackClient.chat.update({
+                        channel: payload.channel?.id || payload.message.channel,
+                        ts: payload.message.ts,
+                        text: `🔒 ${monthName} ${year} values locked in!`,
+                        blocks: updatedBlocks as any
+                      });
                     }
                   }
                 }

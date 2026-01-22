@@ -3,332 +3,792 @@ import {
   budgetCategories, 
   budgets, 
   fundMovements, 
-  savingsSnapshots, 
-  monthlyCategorySummaries,
-  slackOAuth
+  monthlySnapshots,
+  monthEndState,
+  plaidTransactions,
+  transactionCategories
 } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gte, lte, sql } from 'drizzle-orm';
 import { getUserBudget } from './budgets';
-import { getCategorySpendingStats, sendVariableSurplusDeficitNotification } from './slack-notifications';
 
+// Types for month-end processing
 export interface ProcessMonthEndParams {
   userId: number;
   year: number;
   month: number;
 }
 
-/**
- * Process end-of-month operations:
- * 1. Variable categories: Handle surplus/deficit movements
- * 2. Savings categories: Create snapshots
- * 3. Fixed categories: Update accumulated totals in monthlyCategorySummaries
- */
-export async function processMonthEnd(params: ProcessMonthEndParams): Promise<{
-  variableMovements: number;
-  savingsSnapshots: number;
-  fixedUpdates: number;
-}> {
-  const { userId, year, month } = params;
+export interface CategoryBalance {
+  categoryId: number;
+  categoryName: string;
+  categoryType: string;
+  allotment: number;
+  spent: number;
+  surplus: number;  // Positive if surplus, negative if deficit
+  rolloverBalance: number;
+  color: string | null;
+  autoSurplusDestination: string | null;
+  surplusTargetCategoryId: number | null;
+}
 
-  // Get user's budget
+export interface MonthEndSummary {
+  totalIncome: number;
+  totalSpent: number;
+  totalSurplus: number;
+  variableCategories: CategoryBalance[];
+  fixedCategories: CategoryBalance[];
+  savingsCategories: CategoryBalance[];
+  deficitCategories: CategoryBalance[];
+  surplusCategories: CategoryBalance[];
+}
+
+/**
+ * Calculate spending for a category in a specific month
+ */
+export async function getCategorySpending(
+  userId: number,
+  categoryId: number,
+  year: number,
+  month: number
+): Promise<number> {
+  const startOfMonth = new Date(year, month - 1, 1);
+  const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+  const startDate = startOfMonth.toISOString().split('T')[0];
+  const endDate = endOfMonth.toISOString().split('T')[0];
+
+  const spendingData = await db
+    .select({
+      amount: sql<string>`SUM(ABS(CAST(${transactionCategories.amount} AS NUMERIC)))`.as('total'),
+    })
+    .from(transactionCategories)
+    .innerJoin(plaidTransactions, eq(transactionCategories.transactionId, plaidTransactions.id))
+    .where(
+      and(
+        eq(plaidTransactions.userId, userId),
+        eq(transactionCategories.categoryId, categoryId),
+        gte(plaidTransactions.date, startDate),
+        lte(plaidTransactions.date, endDate)
+      )
+    );
+
+  return parseFloat(spendingData[0]?.amount || '0') || 0;
+}
+
+/**
+ * Calculate real-time savings balance for a savings category
+ * Balance = previous month's final balance + this month's allotment - this month's transactions
+ */
+export async function calculateSavingsBalance(
+  userId: number,
+  budgetId: number,
+  categoryId: number,
+  year: number,
+  month: number
+): Promise<number> {
+  // Get the category
+  const [category] = await db
+    .select()
+    .from(budgetCategories)
+    .where(eq(budgetCategories.id, categoryId))
+    .limit(1);
+
+  if (!category || category.categoryType !== 'savings') {
+    throw new Error('Category not found or not a savings category');
+  }
+
+  // Get previous month's snapshot
+  let prevYear = year;
+  let prevMonth = month - 1;
+  if (prevMonth === 0) {
+    prevMonth = 12;
+    prevYear = year - 1;
+  }
+
+  const [prevSnapshot] = await db
+    .select()
+    .from(monthlySnapshots)
+    .where(and(
+      eq(monthlySnapshots.userId, userId),
+      eq(monthlySnapshots.budgetId, budgetId),
+      eq(monthlySnapshots.categoryId, categoryId),
+      eq(monthlySnapshots.year, prevYear),
+      eq(monthlySnapshots.month, prevMonth),
+      eq(monthlySnapshots.isLocked, true)
+    ))
+    .limit(1);
+
+  // Previous balance (from last month's snapshot or from rolloverBalance if no snapshot)
+  const previousBalance = prevSnapshot 
+    ? parseFloat(prevSnapshot.finalRolloverBalance || '0')
+    : parseFloat(category.rolloverBalance || '0');
+
+  // This month's allotment
+  const allotment = parseFloat(category.allocatedAmount || '0');
+
+  // This month's spending (transactions reduce savings)
+  const spent = await getCategorySpending(userId, categoryId, year, month);
+
+  // Current balance
+  return previousBalance + allotment - spent;
+}
+
+/**
+ * Get all category balances for a month
+ */
+export async function getMonthEndSummary(
+  userId: number,
+  year: number,
+  month: number
+): Promise<MonthEndSummary> {
   const budget = await getUserBudget(userId);
   if (!budget) {
     throw new Error('Budget not found');
   }
 
-  const budgetId = budget.id;
-  let variableMovements = 0;
-  let savingsSnapshotsCount = 0;
-  let fixedUpdates = 0;
-
-  // Get all categories for this budget
   const allCategories = await db
     .select()
     .from(budgetCategories)
-    .where(eq(budgetCategories.budgetId, budgetId));
+    .where(eq(budgetCategories.budgetId, budget.id));
 
-  // Process Variable categories
-  const variableCategories = allCategories.filter(cat => cat.categoryType === 'variable');
-  for (const variableCat of variableCategories) {
-    const stats = await getCategorySpendingStats(userId, budgetId, variableCat.id);
-    const allocated = parseFloat(variableCat.allocatedAmount || '0');
-    const spent = stats.spent;
-    const difference = allocated - spent; // Positive = surplus, Negative = deficit
+  const variableCategories: CategoryBalance[] = [];
+  const fixedCategories: CategoryBalance[] = [];
+  const savingsCategories: CategoryBalance[] = [];
+  const deficitCategories: CategoryBalance[] = [];
+  const surplusCategories: CategoryBalance[] = [];
 
-    if (difference > 0.01) {
-      // Surplus
-      if (variableCat.autoMoveSurplus && variableCat.surplusTargetCategoryId) {
-        // Auto-move surplus to target savings category
-        const targetCategory = allCategories.find(c => c.id === variableCat.surplusTargetCategoryId);
-        if (targetCategory && targetCategory.categoryType === 'savings') {
-          // Create fund movement record
-          await db.insert(fundMovements).values({
-            userId,
-            budgetId,
-            fromCategoryId: variableCat.id,
-            toCategoryId: targetCategory.id,
-            amount: difference.toFixed(2),
-            movementType: 'surplus',
-            variableCategoryId: variableCat.id,
-            month,
-            year,
-          });
+  let totalSpent = 0;
 
-          // Update target savings category accumulatedTotal
-          const newAccumulated = parseFloat(targetCategory.accumulatedTotal || '0') + difference;
-          await db
-            .update(budgetCategories)
-            .set({
-              accumulatedTotal: newAccumulated.toFixed(2),
-              updatedAt: new Date(),
-            })
-            .where(eq(budgetCategories.id, targetCategory.id));
+  for (const cat of allCategories) {
+    if (cat.categoryType === 'surplus' || cat.categoryType === 'excluded') {
+      continue;
+    }
 
-          variableMovements++;
-        }
-      } else {
-        // Send Slack notification asking user to choose
-        await sendVariableSurplusDeficitNotification(
-          userId,
-          variableCat.id,
-          'surplus',
-          difference,
-          year,
-          month
-        );
+    const spent = await getCategorySpending(userId, cat.id, year, month);
+    const allotment = parseFloat(cat.allocatedAmount || '0');
+    const surplus = allotment - spent;
+    const rolloverBalance = parseFloat(cat.rolloverBalance || '0');
+
+    const balance: CategoryBalance = {
+      categoryId: cat.id,
+      categoryName: cat.name,
+      categoryType: cat.categoryType,
+      allotment,
+      spent,
+      surplus,
+      rolloverBalance,
+      color: cat.color,
+      autoSurplusDestination: cat.autoSurplusDestination,
+      surplusTargetCategoryId: cat.surplusTargetCategoryId,
+    };
+
+    if (cat.categoryType === 'variable') {
+      variableCategories.push(balance);
+      totalSpent += spent;
+      if (surplus < -0.01) {
+        deficitCategories.push(balance);
+      } else if (surplus > 0.01) {
+        surplusCategories.push(balance);
       }
-    } else if (difference < -0.01) {
-      // Deficit
-      const deficitAmount = Math.abs(difference);
-      if (variableCat.autoMoveDeficit && variableCat.deficitSourceCategoryId) {
-        // Auto-move deficit from source savings category
-        const sourceCategory = allCategories.find(c => c.id === variableCat.deficitSourceCategoryId);
-        if (sourceCategory && sourceCategory.categoryType === 'savings') {
-          const currentAccumulated = parseFloat(sourceCategory.accumulatedTotal || '0');
-          if (currentAccumulated >= deficitAmount) {
-            // Create fund movement record
-            await db.insert(fundMovements).values({
-              userId,
-              budgetId,
-              fromCategoryId: sourceCategory.id,
-              toCategoryId: variableCat.id,
-              amount: deficitAmount.toFixed(2),
-              movementType: 'deficit',
-              variableCategoryId: variableCat.id,
-              month,
-              year,
-            });
-
-            // Update source savings category accumulatedTotal
-            const newAccumulated = currentAccumulated - deficitAmount;
-            await db
-              .update(budgetCategories)
-              .set({
-                accumulatedTotal: newAccumulated.toFixed(2),
-                updatedAt: new Date(),
-              })
-              .where(eq(budgetCategories.id, sourceCategory.id));
-
-            variableMovements++;
-          } else {
-            console.log(`Insufficient funds in source category ${sourceCategory.name} for deficit of $${deficitAmount.toFixed(2)}`);
-          }
-        }
-      } else {
-        // Send Slack notification asking user to choose
-        await sendVariableSurplusDeficitNotification(
-          userId,
-          variableCat.id,
-          'deficit',
-          deficitAmount,
-          year,
-          month
-        );
+    } else if (cat.categoryType === 'fixed') {
+      fixedCategories.push(balance);
+      totalSpent += spent;
+      // Fixed categories with deficit after rollover deduction
+      if (surplus < -0.01 && rolloverBalance + surplus < 0) {
+        deficitCategories.push(balance);
       }
+    } else if (cat.categoryType === 'savings') {
+      // For savings, calculate the real-time balance
+      const currentBalance = await calculateSavingsBalance(userId, budget.id, cat.id, year, month);
+      balance.rolloverBalance = currentBalance;
+      savingsCategories.push(balance);
+      totalSpent += allotment; // Savings contribution counts as "spent"
     }
   }
 
-  // Process Savings categories - create snapshots
-  const savingsCategories = allCategories.filter(cat => cat.categoryType === 'savings');
-  for (const savingsCat of savingsCategories) {
-    const accumulatedTotal = parseFloat(savingsCat.accumulatedTotal || '0');
-
-    // Check if snapshot already exists
-    const [existing] = await db
-      .select()
-      .from(savingsSnapshots)
-      .where(and(
-        eq(savingsSnapshots.userId, userId),
-        eq(savingsSnapshots.budgetId, budgetId),
-        eq(savingsSnapshots.categoryId, savingsCat.id),
-        eq(savingsSnapshots.year, year),
-        eq(savingsSnapshots.month, month)
-      ))
-      .limit(1);
-
-    if (existing) {
-      // Update existing snapshot
-      await db
-        .update(savingsSnapshots)
-        .set({
-          accumulatedTotal: accumulatedTotal.toFixed(2),
-        })
-        .where(eq(savingsSnapshots.id, existing.id));
-    } else {
-      // Create new snapshot
-      await db.insert(savingsSnapshots).values({
-        userId,
-        budgetId,
-        categoryId: savingsCat.id,
-        year,
-        month,
-        accumulatedTotal: accumulatedTotal.toFixed(2),
-      });
-    }
-
-    savingsSnapshotsCount++;
-  }
-
-  // Process Fixed categories - update monthlyCategorySummaries accumulatedTotal
-  const fixedCategories = allCategories.filter(cat => cat.categoryType === 'fixed');
-  for (const fixedCat of fixedCategories) {
-    const stats = await getCategorySpendingStats(userId, budgetId, fixedCat.id);
-    const allocated = parseFloat(fixedCat.allocatedAmount || '0');
-    const spent = stats.spent;
-    const difference = allocated - spent; // Positive = saved, Negative = overspent
-
-    // Update accumulatedTotal in monthlyCategorySummaries
-    // First, get or create the monthly summary
-    const [existingSummary] = await db
-      .select()
-      .from(monthlyCategorySummaries)
-      .where(and(
-        eq(monthlyCategorySummaries.userId, userId),
-        eq(monthlyCategorySummaries.budgetId, budgetId),
-        eq(monthlyCategorySummaries.categoryId, fixedCat.id),
-        eq(monthlyCategorySummaries.year, year),
-        eq(monthlyCategorySummaries.month, month)
-      ))
-      .limit(1);
-
-    if (existingSummary) {
-      // Update existing summary
-      await db
-        .update(monthlyCategorySummaries)
-        .set({
-          accumulatedTotal: difference.toFixed(2),
-          updatedAt: new Date(),
-        })
-        .where(eq(monthlyCategorySummaries.id, existingSummary.id));
-    } else {
-      // Create new summary (this should normally exist from generateMonthlySummary, but create if missing)
-      await db.insert(monthlyCategorySummaries).values({
-        userId,
-        budgetId: budgetId,
-        categoryId: fixedCat.id,
-        year,
-        month,
-        totalSpent: spent.toFixed(2),
-        transactionCount: 0, // Would need to calculate this
-        accumulatedTotal: difference.toFixed(2),
-      });
-    }
-
-    // Also update the category's accumulatedTotal
-    const currentAccumulated = parseFloat(fixedCat.accumulatedTotal || '0');
-    const newAccumulated = currentAccumulated + difference;
-    await db
-      .update(budgetCategories)
-      .set({
-        accumulatedTotal: newAccumulated.toFixed(2),
-        updatedAt: new Date(),
-      })
-      .where(eq(budgetCategories.id, fixedCat.id));
-
-    fixedUpdates++;
-  }
+  const totalIncome = parseFloat(budget.income || '0');
+  const totalSurplus = totalIncome - totalSpent;
 
   return {
-    variableMovements,
-    savingsSnapshots: savingsSnapshotsCount,
-    fixedUpdates,
+    totalIncome,
+    totalSpent,
+    totalSurplus,
+    variableCategories,
+    fixedCategories,
+    savingsCategories,
+    deficitCategories,
+    surplusCategories,
   };
 }
 
 /**
- * Process a Variable category surplus/deficit movement from Slack interaction
+ * Initialize month-end processing state
  */
-export async function processVariableMovement(
+export async function initializeMonthEnd(
   userId: number,
-  variableCategoryId: number,
-  targetCategoryId: number,
-  movementType: 'surplus' | 'deficit',
-  amount: number,
+  year: number,
+  month: number,
+  slackChannelId: string
+): Promise<void> {
+  const budget = await getUserBudget(userId);
+  if (!budget) {
+    throw new Error('Budget not found');
+  }
+
+  // Check if month-end already exists
+  const [existing] = await db
+    .select()
+    .from(monthEndState)
+    .where(and(
+      eq(monthEndState.userId, userId),
+      eq(monthEndState.year, year),
+      eq(monthEndState.month, month)
+    ))
+    .limit(1);
+
+  if (existing) {
+    // Update existing state
+    await db
+      .update(monthEndState)
+      .set({
+        status: 'in_progress',
+        currentStep: 'deficits',
+        processedCategories: '[]',
+        pendingTransfers: '[]',
+        slackChannelId,
+        updatedAt: new Date(),
+      })
+      .where(eq(monthEndState.id, existing.id));
+  } else {
+    // Create new state
+    await db.insert(monthEndState).values({
+      userId,
+      budgetId: budget.id,
+      year,
+      month,
+      status: 'in_progress',
+      currentStep: 'deficits',
+      processedCategories: '[]',
+      pendingTransfers: '[]',
+      slackChannelId,
+    });
+  }
+}
+
+/**
+ * Get current month-end state
+ */
+export async function getMonthEndState(
+  userId: number,
   year: number,
   month: number
-): Promise<void> {
+) {
+  const [state] = await db
+    .select()
+    .from(monthEndState)
+    .where(and(
+      eq(monthEndState.userId, userId),
+      eq(monthEndState.year, year),
+      eq(monthEndState.month, month)
+    ))
+    .limit(1);
 
-  // Get budget
+  return state || null;
+}
+
+/**
+ * Update month-end state
+ */
+export async function updateMonthEndState(
+  userId: number,
+  year: number,
+  month: number,
+  updates: {
+    status?: string;
+    currentStep?: string;
+    pendingCategoryId?: number | null;
+    slackMessageTs?: string | null;
+    processedCategories?: string;
+    pendingTransfers?: string;
+  }
+): Promise<void> {
+  await db
+    .update(monthEndState)
+    .set({
+      ...updates,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(monthEndState.userId, userId),
+      eq(monthEndState.year, year),
+      eq(monthEndState.month, month)
+    ));
+}
+
+/**
+ * Process automatic fixed category surplus/deficit
+ * Fixed categories automatically use their rollover account
+ */
+export async function processFixedCategoryAuto(
+  userId: number,
+  categoryId: number,
+  year: number,
+  month: number
+): Promise<{ remainingDeficit: number }> {
+  const budget = await getUserBudget(userId);
+  if (!budget) {
+    throw new Error('Budget not found');
+  }
+
+  const [category] = await db
+    .select()
+    .from(budgetCategories)
+    .where(and(
+      eq(budgetCategories.id, categoryId),
+      eq(budgetCategories.budgetId, budget.id)
+    ))
+    .limit(1);
+
+  if (!category || category.categoryType !== 'fixed') {
+    throw new Error('Category not found or not a fixed category');
+  }
+
+  const spent = await getCategorySpending(userId, categoryId, year, month);
+  const allotment = parseFloat(category.allocatedAmount || '0');
+  const surplus = allotment - spent;
+  const currentRollover = parseFloat(category.rolloverBalance || '0');
+
+  let newRollover = currentRollover;
+  let remainingDeficit = 0;
+
+  if (surplus >= 0) {
+    // Surplus - add to rollover automatically
+    newRollover = currentRollover + surplus;
+    
+    // Record the fund movement
+    await db.insert(fundMovements).values({
+      userId,
+      budgetId: budget.id,
+      fromCategoryId: categoryId,
+      toCategoryId: categoryId, // Self-reference for rollover
+      amount: surplus.toFixed(2),
+      transferType: 'surplus_to_rollover',
+      sourceType: 'surplus',
+      relatedCategoryId: categoryId,
+      isAutomatic: true,
+      month,
+      year,
+      description: `Fixed category ${category.name}: $${surplus.toFixed(2)} surplus added to rollover`,
+    });
+  } else {
+    // Deficit - try to cover from rollover
+    const deficitAmount = Math.abs(surplus);
+    
+    if (currentRollover >= deficitAmount) {
+      // Can fully cover from rollover
+      newRollover = currentRollover - deficitAmount;
+      
+      await db.insert(fundMovements).values({
+        userId,
+        budgetId: budget.id,
+        fromCategoryId: categoryId,
+        toCategoryId: categoryId,
+        amount: deficitAmount.toFixed(2),
+        transferType: 'cover_deficit',
+        sourceType: 'rollover',
+        relatedCategoryId: categoryId,
+        isAutomatic: true,
+        month,
+        year,
+        description: `Fixed category ${category.name}: $${deficitAmount.toFixed(2)} deficit covered from rollover`,
+      });
+    } else {
+      // Partial coverage - use all rollover, deficit remains
+      remainingDeficit = deficitAmount - currentRollover;
+      
+      if (currentRollover > 0) {
+        await db.insert(fundMovements).values({
+          userId,
+          budgetId: budget.id,
+          fromCategoryId: categoryId,
+          toCategoryId: categoryId,
+          amount: currentRollover.toFixed(2),
+          transferType: 'cover_deficit',
+          sourceType: 'rollover',
+          relatedCategoryId: categoryId,
+          isAutomatic: true,
+          month,
+          year,
+          description: `Fixed category ${category.name}: $${currentRollover.toFixed(2)} partial deficit covered from rollover`,
+        });
+      }
+      
+      newRollover = 0; // Rollover depleted
+    }
+  }
+
+  // Update category rollover balance
+  await db
+    .update(budgetCategories)
+    .set({
+      rolloverBalance: newRollover.toFixed(2),
+      updatedAt: new Date(),
+    })
+    .where(eq(budgetCategories.id, categoryId));
+
+  return { remainingDeficit };
+}
+
+/**
+ * Process variable category deficit - first try rollover
+ */
+export async function processVariableDeficitFromRollover(
+  userId: number,
+  categoryId: number,
+  deficitAmount: number,
+  year: number,
+  month: number
+): Promise<{ remainingDeficit: number }> {
+  const budget = await getUserBudget(userId);
+  if (!budget) {
+    throw new Error('Budget not found');
+  }
+
+  const [category] = await db
+    .select()
+    .from(budgetCategories)
+    .where(and(
+      eq(budgetCategories.id, categoryId),
+      eq(budgetCategories.budgetId, budget.id)
+    ))
+    .limit(1);
+
+  if (!category) {
+    throw new Error('Category not found');
+  }
+
+  const currentRollover = parseFloat(category.rolloverBalance || '0');
+  let remainingDeficit = deficitAmount;
+  let newRollover = currentRollover;
+
+  if (currentRollover > 0) {
+    const amountFromRollover = Math.min(currentRollover, deficitAmount);
+    remainingDeficit = deficitAmount - amountFromRollover;
+    newRollover = currentRollover - amountFromRollover;
+
+    await db.insert(fundMovements).values({
+      userId,
+      budgetId: budget.id,
+      fromCategoryId: categoryId,
+      toCategoryId: categoryId,
+      amount: amountFromRollover.toFixed(2),
+      transferType: 'cover_deficit',
+      sourceType: 'rollover',
+      relatedCategoryId: categoryId,
+      isAutomatic: true,
+      month,
+      year,
+      description: `Variable category ${category.name}: $${amountFromRollover.toFixed(2)} deficit covered from rollover`,
+    });
+
+    await db
+      .update(budgetCategories)
+      .set({
+        rolloverBalance: newRollover.toFixed(2),
+        updatedAt: new Date(),
+      })
+      .where(eq(budgetCategories.id, categoryId));
+  }
+
+  return { remainingDeficit };
+}
+
+/**
+ * Record a transfer from one category to another (user-initiated via Slack)
+ */
+export async function recordTransfer(
+  userId: number,
+  fromCategoryId: number,
+  toCategoryId: number,
+  amount: number,
+  transferType: string,
+  sourceType: string,
+  year: number,
+  month: number,
+  description: string
+): Promise<void> {
   const budget = await getUserBudget(userId);
   if (!budget) {
     throw new Error('Budget not found');
   }
 
   // Get categories
-  const [variableCategory] = await db
+  const [fromCategory] = await db
     .select()
     .from(budgetCategories)
-    .where(and(
-      eq(budgetCategories.id, variableCategoryId),
-      eq(budgetCategories.budgetId, budget.id)
-    ))
+    .where(eq(budgetCategories.id, fromCategoryId))
     .limit(1);
 
-  const [targetCategory] = await db
+  const [toCategory] = await db
     .select()
     .from(budgetCategories)
-    .where(and(
-      eq(budgetCategories.id, targetCategoryId),
-      eq(budgetCategories.budgetId, budget.id)
-    ))
+    .where(eq(budgetCategories.id, toCategoryId))
     .limit(1);
 
-  if (!variableCategory || !targetCategory) {
+  if (!fromCategory || !toCategory) {
     throw new Error('Category not found');
   }
 
-  if (targetCategory.categoryType !== 'savings') {
-    throw new Error('Target category must be a savings category');
-  }
-
-  // Create fund movement record
+  // Record the fund movement
   await db.insert(fundMovements).values({
     userId,
     budgetId: budget.id,
-    fromCategoryId: movementType === 'surplus' ? variableCategoryId : targetCategoryId,
-    toCategoryId: movementType === 'surplus' ? targetCategoryId : variableCategoryId,
+    fromCategoryId,
+    toCategoryId,
     amount: amount.toFixed(2),
-    movementType,
-    variableCategoryId,
+    transferType,
+    sourceType,
+    relatedCategoryId: toCategoryId, // The category receiving help or giving surplus
+    isAutomatic: false,
     month,
     year,
+    description,
   });
 
-  // Update target/source savings category accumulatedTotal
-  const currentAccumulated = parseFloat(targetCategory.accumulatedTotal || '0');
-  const newAccumulated = movementType === 'surplus'
-    ? currentAccumulated + amount
-    : currentAccumulated - amount;
+  // Update balances based on transfer type
+  if (sourceType === 'surplus') {
+    // Surplus from variable category going to savings or rollover
+    // No balance update needed for the source (it's calculated from spending)
+    // Update target balance
+    const currentBalance = parseFloat(toCategory.rolloverBalance || '0');
+    await db
+      .update(budgetCategories)
+      .set({
+        rolloverBalance: (currentBalance + amount).toFixed(2),
+        updatedAt: new Date(),
+      })
+      .where(eq(budgetCategories.id, toCategoryId));
+  } else if (sourceType === 'rollover' || sourceType === 'savings') {
+    // Money coming from rollover or savings to cover deficit
+    const fromBalance = parseFloat(fromCategory.rolloverBalance || '0');
+    await db
+      .update(budgetCategories)
+      .set({
+        rolloverBalance: (fromBalance - amount).toFixed(2),
+        updatedAt: new Date(),
+      })
+      .where(eq(budgetCategories.id, fromCategoryId));
+  }
+}
 
-  if (newAccumulated < 0) {
-    throw new Error('Insufficient funds in target category');
+/**
+ * Process automatic surplus for variable category
+ */
+export async function processVariableSurplusAuto(
+  userId: number,
+  categoryId: number,
+  surplusAmount: number,
+  year: number,
+  month: number
+): Promise<boolean> {
+  const budget = await getUserBudget(userId);
+  if (!budget) {
+    throw new Error('Budget not found');
   }
 
-  await db
-    .update(budgetCategories)
-    .set({
-      accumulatedTotal: newAccumulated.toFixed(2),
-      updatedAt: new Date(),
-    })
-    .where(eq(budgetCategories.id, targetCategoryId));
+  const [category] = await db
+    .select()
+    .from(budgetCategories)
+    .where(and(
+      eq(budgetCategories.id, categoryId),
+      eq(budgetCategories.budgetId, budget.id)
+    ))
+    .limit(1);
+
+  if (!category || !category.autoSurplusDestination) {
+    return false; // No automatic handling configured
+  }
+
+  if (category.autoSurplusDestination === 'rollover') {
+    // Add to this category's rollover
+    const currentRollover = parseFloat(category.rolloverBalance || '0');
+    await db
+      .update(budgetCategories)
+      .set({
+        rolloverBalance: (currentRollover + surplusAmount).toFixed(2),
+        updatedAt: new Date(),
+      })
+      .where(eq(budgetCategories.id, categoryId));
+
+    await db.insert(fundMovements).values({
+      userId,
+      budgetId: budget.id,
+      fromCategoryId: categoryId,
+      toCategoryId: categoryId,
+      amount: surplusAmount.toFixed(2),
+      transferType: 'surplus_to_rollover',
+      sourceType: 'surplus',
+      relatedCategoryId: categoryId,
+      isAutomatic: true,
+      month,
+      year,
+      description: `Variable category ${category.name}: $${surplusAmount.toFixed(2)} surplus added to rollover`,
+    });
+
+    return true;
+  } else if (category.autoSurplusDestination === 'savings' && category.surplusTargetCategoryId) {
+    // Move to specified savings category
+    const [targetCategory] = await db
+      .select()
+      .from(budgetCategories)
+      .where(eq(budgetCategories.id, category.surplusTargetCategoryId))
+      .limit(1);
+
+    if (targetCategory && targetCategory.categoryType === 'savings') {
+      const currentBalance = parseFloat(targetCategory.rolloverBalance || '0');
+      await db
+        .update(budgetCategories)
+        .set({
+          rolloverBalance: (currentBalance + surplusAmount).toFixed(2),
+          updatedAt: new Date(),
+        })
+        .where(eq(budgetCategories.id, targetCategory.id));
+
+      await db.insert(fundMovements).values({
+        userId,
+        budgetId: budget.id,
+        fromCategoryId: categoryId,
+        toCategoryId: targetCategory.id,
+        amount: surplusAmount.toFixed(2),
+        transferType: 'surplus_to_savings',
+        sourceType: 'surplus',
+        relatedCategoryId: categoryId,
+        isAutomatic: true,
+        month,
+        year,
+        description: `Variable category ${category.name}: $${surplusAmount.toFixed(2)} surplus moved to ${targetCategory.name}`,
+      });
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Create monthly snapshots and lock the month
+ */
+export async function lockMonth(
+  userId: number,
+  year: number,
+  month: number
+): Promise<void> {
+  const budget = await getUserBudget(userId);
+  if (!budget) {
+    throw new Error('Budget not found');
+  }
+
+  const allCategories = await db
+    .select()
+    .from(budgetCategories)
+    .where(eq(budgetCategories.budgetId, budget.id));
+
+  for (const cat of allCategories) {
+    if (cat.categoryType === 'surplus' || cat.categoryType === 'excluded') {
+      continue;
+    }
+
+    const spent = await getCategorySpending(userId, cat.id, year, month);
+    const allotment = parseFloat(cat.allocatedAmount || '0');
+    const rolloverBalance = parseFloat(cat.rolloverBalance || '0');
+
+    // Get fund movements for this category this month
+    const movements = await db
+      .select()
+      .from(fundMovements)
+      .where(and(
+        eq(fundMovements.userId, userId),
+        eq(fundMovements.year, year),
+        eq(fundMovements.month, month)
+      ));
+
+    let surplusGiven = 0;
+    let deficitReceived = 0;
+
+    for (const movement of movements) {
+      if (movement.fromCategoryId === cat.id && movement.toCategoryId !== cat.id) {
+        surplusGiven += parseFloat(movement.amount || '0');
+      }
+      if (movement.toCategoryId === cat.id && movement.fromCategoryId !== cat.id) {
+        deficitReceived += parseFloat(movement.amount || '0');
+      }
+    }
+
+    // Check if snapshot already exists
+    const [existing] = await db
+      .select()
+      .from(monthlySnapshots)
+      .where(and(
+        eq(monthlySnapshots.userId, userId),
+        eq(monthlySnapshots.budgetId, budget.id),
+        eq(monthlySnapshots.categoryId, cat.id),
+        eq(monthlySnapshots.year, year),
+        eq(monthlySnapshots.month, month)
+      ))
+      .limit(1);
+
+    if (existing) {
+      await db
+        .update(monthlySnapshots)
+        .set({
+          allotment: allotment.toFixed(2),
+          spent: spent.toFixed(2),
+          surplusGiven: surplusGiven.toFixed(2),
+          deficitReceived: deficitReceived.toFixed(2),
+          finalRolloverBalance: rolloverBalance.toFixed(2),
+          isLocked: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(monthlySnapshots.id, existing.id));
+    } else {
+      await db.insert(monthlySnapshots).values({
+        userId,
+        budgetId: budget.id,
+        categoryId: cat.id,
+        year,
+        month,
+        allotment: allotment.toFixed(2),
+        spent: spent.toFixed(2),
+        surplusGiven: surplusGiven.toFixed(2),
+        deficitReceived: deficitReceived.toFixed(2),
+        finalRolloverBalance: rolloverBalance.toFixed(2),
+        isLocked: true,
+      });
+    }
+  }
+
+  // Update month-end state to completed
+  await updateMonthEndState(userId, year, month, {
+    status: 'completed',
+    currentStep: 'locked',
+  });
+}
+
+/**
+ * Legacy function for backwards compatibility
+ * Initiates the new month-end flow
+ */
+export async function processMonthEnd(params: ProcessMonthEndParams): Promise<{
+  message: string;
+  status: string;
+}> {
+  const { userId, year, month } = params;
+
+  // This now just returns info - actual processing happens via Slack flow
+  const summary = await getMonthEndSummary(userId, year, month);
+
+  return {
+    message: `Month-end ready: ${summary.deficitCategories.length} deficits, ${summary.surplusCategories.length} surpluses to process`,
+    status: 'ready',
+  };
 }

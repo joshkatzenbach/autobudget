@@ -43,13 +43,11 @@ export const budgetCategories = pgTable('budget_categories', {
   allocatedAmount: decimal('allocated_amount', { precision: 10, scale: 2 }).notNull(), // Amount to spend/allocate per month (same for all category types)
   spentAmount: decimal('spent_amount', { precision: 10, scale: 2 }).default('0').notNull(),
   categoryType: varchar('category_type', { length: 50 }).notNull().default('variable'), // 'fixed', 'savings', 'variable', 'surplus', 'excluded'
-  accumulatedTotal: decimal('accumulated_total', { precision: 10, scale: 2 }).default('0').notNull(), // For Savings/Surplus/Fixed - tracks year-to-date accumulation
+  rolloverBalance: decimal('rollover_balance', { precision: 10, scale: 2 }).default('0').notNull(), // Rollover balance for variable/fixed, total balance for savings
   color: varchar('color', { length: 7 }), // Hex color code for category (e.g., #FF5733)
-  // Variable category fields
-  autoMoveSurplus: boolean('auto_move_surplus').default(false).notNull(), // Whether to automatically move surplus
-  surplusTargetCategoryId: integer('surplus_target_category_id'), // Target savings category for surplus - reference added after table creation
-  autoMoveDeficit: boolean('auto_move_deficit').default(false).notNull(), // Whether to automatically move deficit
-  deficitSourceCategoryId: integer('deficit_source_category_id'), // Source savings category for deficit - reference added after table creation
+  // Variable category fields - surplus handling
+  autoSurplusDestination: varchar('auto_surplus_destination', { length: 20 }), // 'rollover', 'savings', or null (ask each month)
+  surplusTargetCategoryId: integer('surplus_target_category_id'), // Target savings category for surplus (when autoSurplusDestination = 'savings')
   // Fixed category fields
   expectedMerchantName: varchar('expected_merchant_name', { length: 255 }), // Expected merchant name for bills
   hideFromTransactionLists: boolean('hide_from_transaction_lists').default(false).notNull(), // Whether to hide from transaction lists
@@ -115,16 +113,17 @@ export const transactionCategories = pgTable('transaction_categories', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// DEPRECATED: Use monthlySnapshots instead. Kept for migration purposes.
 export const monthlyCategorySummaries = pgTable('monthly_category_summaries', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  budgetId: integer('budget_id').references(() => budgets.id, { onDelete: 'cascade' }), // Optional, for budget-specific summaries
+  budgetId: integer('budget_id').references(() => budgets.id, { onDelete: 'cascade' }),
   categoryId: integer('category_id').notNull().references(() => budgetCategories.id, { onDelete: 'cascade' }),
-  year: integer('year').notNull(), // e.g., 2024
-  month: integer('month').notNull(), // 1-12
-  totalSpent: decimal('total_spent', { precision: 10, scale: 2 }).notNull(), // Sum of all transaction amounts for this category in this month
-  transactionCount: integer('transaction_count').default(0).notNull(), // Number of transactions in this category for this month
-  accumulatedTotal: decimal('accumulated_total', { precision: 10, scale: 2 }), // For Fixed categories - tracks savings at month end
+  year: integer('year').notNull(),
+  month: integer('month').notNull(),
+  totalSpent: decimal('total_spent', { precision: 10, scale: 2 }).notNull(),
+  transactionCount: integer('transaction_count').default(0).notNull(),
+  accumulatedTotal: decimal('accumulated_total', { precision: 10, scale: 2 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({
@@ -164,27 +163,67 @@ export const fundMovements = pgTable('fund_movements', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   budgetId: integer('budget_id').notNull().references(() => budgets.id, { onDelete: 'cascade' }),
-  fromCategoryId: integer('from_category_id').references(() => budgetCategories.id, { onDelete: 'set null' }), // null for deficit (pulled from source)
-  toCategoryId: integer('to_category_id').references(() => budgetCategories.id, { onDelete: 'set null' }), // null for surplus (moved to target)
+  fromCategoryId: integer('from_category_id').references(() => budgetCategories.id, { onDelete: 'set null' }),
+  toCategoryId: integer('to_category_id').references(() => budgetCategories.id, { onDelete: 'set null' }),
   amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
-  movementType: varchar('movement_type', { length: 20 }).notNull(), // 'surplus' or 'deficit'
-  variableCategoryId: integer('variable_category_id').notNull().references(() => budgetCategories.id, { onDelete: 'cascade' }), // the variable category this movement is for
+  // Transfer type describes what kind of movement this is
+  transferType: varchar('transfer_type', { length: 30 }).notNull(), // 'surplus_to_savings', 'surplus_to_rollover', 'cover_deficit', 'savings_withdrawal', 'month_end_contribution'
+  // Source type describes where the money came from
+  sourceType: varchar('source_type', { length: 20 }).notNull(), // 'surplus', 'rollover', 'savings'
+  // The category that had the surplus or deficit triggering this movement
+  relatedCategoryId: integer('related_category_id').references(() => budgetCategories.id, { onDelete: 'set null' }),
+  isAutomatic: boolean('is_automatic').default(false).notNull(), // Whether this was auto-processed (vs user selection)
   month: integer('month').notNull(), // 1-12
   year: integer('year').notNull(),
+  description: text('description'), // Human-readable description of the transfer
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-export const savingsSnapshots = pgTable('savings_snapshots', {
+// Monthly snapshots - captures the state of each category at the end of each month
+export const monthlySnapshots = pgTable('monthly_snapshots', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   budgetId: integer('budget_id').notNull().references(() => budgets.id, { onDelete: 'cascade' }),
   categoryId: integer('category_id').notNull().references(() => budgetCategories.id, { onDelete: 'cascade' }),
   year: integer('year').notNull(),
   month: integer('month').notNull(), // 1-12
-  accumulatedTotal: decimal('accumulated_total', { precision: 10, scale: 2 }).notNull(),
+  // Core values for the month
+  allotment: decimal('allotment', { precision: 10, scale: 2 }).notNull(), // Monthly budget/contribution for this category
+  spent: decimal('spent', { precision: 10, scale: 2 }).default('0').notNull(), // Total spent this month
+  // Transfer tracking
+  surplusGiven: decimal('surplus_given', { precision: 10, scale: 2 }).default('0').notNull(), // Surplus given away to other categories
+  deficitReceived: decimal('deficit_received', { precision: 10, scale: 2 }).default('0').notNull(), // Money received to cover this category's deficit
+  // Final state
+  finalRolloverBalance: decimal('final_rollover_balance', { precision: 10, scale: 2 }).notNull(), // Balance at end of month (rollover for variable/fixed, total for savings)
+  // Lock status
+  isLocked: boolean('is_locked').default(false).notNull(), // Whether this snapshot is finalized
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({
   uniqueUserBudgetCategoryMonth: unique().on(table.userId, table.budgetId, table.categoryId, table.year, table.month),
+}));
+
+// Month-end state - tracks progress through the month-end reconciliation flow
+export const monthEndState = pgTable('month_end_state', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  budgetId: integer('budget_id').notNull().references(() => budgets.id, { onDelete: 'cascade' }),
+  year: integer('year').notNull(),
+  month: integer('month').notNull(), // 1-12
+  // Flow status
+  status: varchar('status', { length: 20 }).notNull().default('pending'), // 'pending', 'in_progress', 'awaiting_input', 'completed'
+  currentStep: varchar('current_step', { length: 30 }), // 'deficits', 'fixed_deficits', 'surpluses', 'summary'
+  // Current message tracking
+  pendingCategoryId: integer('pending_category_id').references(() => budgetCategories.id, { onDelete: 'set null' }), // Category awaiting user input
+  slackMessageTs: varchar('slack_message_ts', { length: 50 }), // Current Slack message timestamp
+  slackChannelId: varchar('slack_channel_id', { length: 50 }), // Channel where messages are being sent
+  // Progress tracking
+  processedCategories: text('processed_categories'), // JSON array of processed category IDs
+  pendingTransfers: text('pending_transfers'), // JSON array of pending transfers (not yet applied)
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  uniqueUserMonth: unique().on(table.userId, table.year, table.month),
 }));
 
 export const plaidWebhooks = pgTable('plaid_webhooks', {
