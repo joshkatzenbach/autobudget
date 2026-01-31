@@ -269,36 +269,36 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
           if (existingCategories.length === 0) {
             // Categorize new transactions
             try {
-            let plaidCategoryForLLM: string[] | null = null;
-            if (tx.personal_finance_category) {
-              plaidCategoryForLLM = [
-                tx.personal_finance_category.primary,
-                tx.personal_finance_category.detailed,
-              ];
-            } else if (tx.category) {
-              plaidCategoryForLLM = tx.category;
-            }
+              let plaidCategoryForLLM: string[] | null = null;
+              if (tx.personal_finance_category) {
+                plaidCategoryForLLM = [
+                  tx.personal_finance_category.primary,
+                  tx.personal_finance_category.detailed,
+                ];
+              } else if (tx.category) {
+                plaidCategoryForLLM = tx.category;
+              }
 
-            const categorizationResult = await categorizeTransaction({
-              amount: parseFloat(tx.amount.toString()),
-              merchantName: tx.merchant_name || null,
-              plaidCategory: plaidCategoryForLLM,
-              userId: userId,
-              transactionName: tx.name || null,
-            });
+              const categorizationResult = await categorizeTransaction({
+                amount: parseFloat(tx.amount.toString()),
+                merchantName: tx.merchant_name || null,
+                plaidCategory: plaidCategoryForLLM,
+                userId: userId,
+                transactionName: tx.name || null,
+              });
 
-            if (categorizationResult.categoryId) {
-              await assignTransactionCategory(
-                storedTx.id,
-                categorizationResult.categoryId,
-                tx.amount.toString(),
-                false // LLM-assigned
-              );
-              totalCategorized++;
+              if (categorizationResult.categoryId) {
+                await assignTransactionCategory(
+                  storedTx.id,
+                  categorizationResult.categoryId,
+                  tx.amount.toString(),
+                  false // LLM-assigned
+                );
+                totalCategorized++;
+              }
+            } catch (catError: any) {
+              console.error(`Error categorizing transaction ${tx.transaction_id}:`, catError);
             }
-          } catch (catError: any) {
-            console.error(`Error categorizing transaction ${tx.transaction_id}:`, catError);
-          }
           } else {
             console.log(`[SYNC] Transaction ${tx.transaction_id} already categorized, skipping`);
           }
@@ -375,38 +375,39 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
             if (existingCategories.length === 0) {
               // Categorize
               try {
-              let plaidCategoryForLLM: string[] | null = null;
-              if (tx.personal_finance_category) {
-                plaidCategoryForLLM = [
-                  tx.personal_finance_category.primary,
-                  tx.personal_finance_category.detailed,
-                ];
-              } else if (tx.category) {
-                plaidCategoryForLLM = tx.category;
-              }
+                let plaidCategoryForLLM: string[] | null = null;
+                if (tx.personal_finance_category) {
+                  plaidCategoryForLLM = [
+                    tx.personal_finance_category.primary,
+                    tx.personal_finance_category.detailed,
+                  ];
+                } else if (tx.category) {
+                  plaidCategoryForLLM = tx.category;
+                }
 
-              const categorizationResult = await categorizeTransaction({
-                amount: parseFloat(tx.amount.toString()),
-                merchantName: tx.merchant_name || null,
-                plaidCategory: plaidCategoryForLLM,
-                userId: userId,
-                transactionName: tx.name || null,
-              });
+                const categorizationResult = await categorizeTransaction({
+                  amount: parseFloat(tx.amount.toString()),
+                  merchantName: tx.merchant_name || null,
+                  plaidCategory: plaidCategoryForLLM,
+                  userId: userId,
+                  transactionName: tx.name || null,
+                });
 
-              if (categorizationResult.categoryId) {
-                await assignTransactionCategory(
-                  storedTx.id,
-                  categorizationResult.categoryId,
-                  tx.amount.toString(),
-                  false
-                );
-                totalCategorized++;
+                if (categorizationResult.categoryId) {
+                  await assignTransactionCategory(
+                    storedTx.id,
+                    categorizationResult.categoryId,
+                    tx.amount.toString(),
+                    false
+                  );
+                  totalCategorized++;
+                }
+              } catch (catError: any) {
+                console.error(`Error categorizing transaction:`, catError);
               }
-            } catch (catError: any) {
-              console.error(`Error categorizing transaction:`, catError);
+            } else {
+              console.log(`[SYNC] Transaction ${tx.transaction_id} already categorized, skipping`);
             }
-          } else {
-            console.log(`[SYNC] Transaction ${tx.transaction_id} already categorized, skipping`);
           }
         }
       } catch (error: any) {
