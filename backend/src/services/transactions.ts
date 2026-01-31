@@ -62,7 +62,27 @@ export async function storeTransaction(
 
     return transaction;
   } catch (error: any) {
-    // Log detailed error information
+    // Handle unique constraint violation (duplicate transaction)
+    // PostgreSQL error code 23505 = unique_violation
+    if (error.code === '23505' && error.constraint?.includes('transaction_id')) {
+      console.log(`[DUPLICATE] Transaction ${transactionId} already exists, returning existing transaction`);
+      
+      // Return the existing transaction
+      const [existing] = await db
+        .select()
+        .from(plaidTransactions)
+        .where(eq(plaidTransactions.transactionId, transactionId))
+        .limit(1);
+      
+      if (existing) {
+        return existing;
+      }
+      
+      // If for some reason we can't find it, throw the original error
+      throw error;
+    }
+    
+    // Log detailed error information for other errors
     console.error(`Error storing transaction ${transactionId}:`, {
       message: error.message,
       code: error.code,

@@ -103,6 +103,12 @@ export async function sendTransactionNotification(
       return;
     }
 
+    // Check if notification has already been sent
+    if (transaction.notificationSent) {
+      console.log(`Transaction ${transactionId} notification already sent, skipping`);
+      return;
+    }
+
     // Get account name (custom or original)
     // Only query if itemId is not null (transactions can have null itemId after account removal)
     const account = transaction.itemId ? await db
@@ -341,9 +347,19 @@ export async function sendTransactionNotification(
       blocks: blocks
     });
 
+    // Mark notification as sent after successful send
+    await db
+      .update(plaidTransactions)
+      .set({
+        notificationSent: true,
+        updatedAt: new Date(),
+      })
+      .where(eq(plaidTransactions.id, transactionId));
+
   } catch (error: any) {
     console.error('Error sending transaction notification to Slack:', error);
     // Don't throw - we don't want to fail the webhook if Slack fails
+    // Don't mark as sent if there was an error
   }
 }
 

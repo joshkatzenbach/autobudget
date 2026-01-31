@@ -258,8 +258,17 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
             tx.pending || false
           );
 
-          // Categorize new transactions
-          try {
+          // Check if transaction already has a category (might be a duplicate)
+          const existingCategories = await db
+            .select()
+            .from(transactionCategories)
+            .where(eq(transactionCategories.transactionId, storedTx.id))
+            .limit(1);
+
+          // Only categorize if transaction doesn't already have a category
+          if (existingCategories.length === 0) {
+            // Categorize new transactions
+            try {
             let plaidCategoryForLLM: string[] | null = null;
             if (tx.personal_finance_category) {
               plaidCategoryForLLM = [
@@ -290,6 +299,9 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
           } catch (catError: any) {
             console.error(`Error categorizing transaction ${tx.transaction_id}:`, catError);
           }
+          } else {
+            console.log(`[SYNC] Transaction ${tx.transaction_id} already categorized, skipping`);
+          }
         } else {
           // Update existing transaction
           const [existing] = await db
@@ -314,6 +326,31 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
               .where(eq(plaidTransactions.transactionId, tx.transaction_id));
           } else {
             // Modified transaction doesn't exist, treat as new
+            // Check for duplicate first to avoid race condition
+            const [duplicateCheck] = await db
+              .select()
+              .from(plaidTransactions)
+              .where(eq(plaidTransactions.transactionId, tx.transaction_id))
+              .limit(1);
+
+            if (duplicateCheck) {
+              console.log(`[SYNC] Transaction ${tx.transaction_id} found during duplicate check, updating instead`);
+              await db
+                .update(plaidTransactions)
+                .set({
+                  amount: amountToStore,
+                  merchantName: tx.merchant_name || null,
+                  name: tx.name,
+                  date: tx.date,
+                  plaidCategory,
+                  plaidCategoryId,
+                  isPending: tx.pending || false,
+                  updatedAt: new Date(),
+                })
+                .where(eq(plaidTransactions.transactionId, tx.transaction_id));
+              return;
+            }
+
             const storedTx = await storeTransaction(
               userId,
               item.id,
@@ -328,8 +365,16 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
               tx.pending || false
             );
 
-            // Categorize
-            try {
+            // Check if transaction already has a category before categorizing
+            const existingCategories = await db
+              .select()
+              .from(transactionCategories)
+              .where(eq(transactionCategories.transactionId, storedTx.id))
+              .limit(1);
+
+            if (existingCategories.length === 0) {
+              // Categorize
+              try {
               let plaidCategoryForLLM: string[] | null = null;
               if (tx.personal_finance_category) {
                 plaidCategoryForLLM = [
@@ -360,6 +405,8 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
             } catch (catError: any) {
               console.error(`Error categorizing transaction:`, catError);
             }
+          } else {
+            console.log(`[SYNC] Transaction ${tx.transaction_id} already categorized, skipping`);
           }
         }
       } catch (error: any) {

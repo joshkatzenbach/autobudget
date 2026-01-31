@@ -2,7 +2,7 @@ import express, { Response, Request } from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { verifyPlaidWebhook } from '../middleware/webhook-verification';
 import { db } from '../db';
-import { plaidItems, plaidAccounts, plaidTransactions, budgets, plaidWebhooks } from '../db/schema';
+import { plaidItems, plaidAccounts, plaidTransactions, budgets, plaidWebhooks, transactionCategories } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import {
   createLinkToken,
@@ -93,19 +93,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
           const amountToStore = tx.amount.toString();
 
           if (isNew) {
-            // Check if transaction already exists (shouldn't happen with sync API, but safety check)
-            const [existing] = await db
-              .select()
-              .from(plaidTransactions)
-              .where(eq(plaidTransactions.transactionId, tx.transaction_id))
-              .limit(1);
-
-            if (existing) {
-              console.log(`[SYNC] Transaction ${tx.transaction_id} already exists, skipping`);
-              return;
-            }
-
-            // Store new transaction
+            // Store new transaction (storeTransaction handles duplicates atomically)
             const storedTx = await storeTransaction(
               plaidItem.userId,
               plaidItem.id,
@@ -120,8 +108,12 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
               tx.pending || false
             );
 
-            // Categorize and notify for new transactions
-            await categorizeAndNotify(storedTx, tx);
+            // Check if notification has already been sent (prevents duplicate notifications)
+            if (!storedTx.notificationSent) {
+              await categorizeAndNotify(storedTx, tx);
+            } else {
+              console.log(`[SYNC] Transaction ${tx.transaction_id} notification already sent, skipping`);
+            }
           } else {
             // Update existing transaction
             const [existing] = await db
@@ -148,6 +140,31 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
               console.log(`[SYNC] Updated transaction ${tx.transaction_id}`);
             } else {
               // Modified transaction doesn't exist, treat as new
+              // Check for duplicate first to avoid race condition
+              const [duplicateCheck] = await db
+                .select()
+                .from(plaidTransactions)
+                .where(eq(plaidTransactions.transactionId, tx.transaction_id))
+                .limit(1);
+
+              if (duplicateCheck) {
+                console.log(`[SYNC] Transaction ${tx.transaction_id} found during duplicate check, updating instead`);
+                await db
+                  .update(plaidTransactions)
+                  .set({
+                    amount: amountToStore,
+                    merchantName: tx.merchant_name || null,
+                    name: tx.name,
+                    date: tx.date,
+                    plaidCategory,
+                    plaidCategoryId,
+                    isPending: tx.pending || false,
+                    updatedAt: new Date(),
+                  })
+                  .where(eq(plaidTransactions.transactionId, tx.transaction_id));
+                return;
+              }
+
               const storedTx = await storeTransaction(
                 plaidItem.userId,
                 plaidItem.id,
@@ -161,7 +178,13 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                 plaidCategoryId,
                 tx.pending || false
               );
-              await categorizeAndNotify(storedTx, tx);
+
+              // Check if notification has already been sent (prevents duplicate notifications)
+              if (!storedTx.notificationSent) {
+                await categorizeAndNotify(storedTx, tx);
+              } else {
+                console.log(`[SYNC] Transaction ${tx.transaction_id} notification already sent, skipping`);
+              }
             }
           }
         } catch (error: any) {

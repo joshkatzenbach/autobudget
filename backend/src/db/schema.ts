@@ -101,6 +101,7 @@ export const plaidTransactions = pgTable('plaid_transactions', {
   plaidCategoryId: varchar('plaid_category_id', { length: 255 }), // Plaid's category ID
   isPending: boolean('is_pending').default(false).notNull(), // Whether transaction is pending
   isReviewed: boolean('is_reviewed').default(false).notNull(), // Whether transaction has been reviewed by user
+  notificationSent: boolean('notification_sent').default(false).notNull(), // Whether Slack notification has been sent
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
