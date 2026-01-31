@@ -641,7 +641,7 @@ router.post('/interactive',
           console.log('[DEBUG] Transaction amount:', transactionAmount);
 
           // Get message info from metadata (stored when Split button was clicked)
-          let messageInfo: { channel: string; ts: string } | null = null;
+          let messageInfo: { channel: string; ts: string; blocks?: any[]; text?: string } | null = null;
           try {
             const metadata = view.private_metadata ? JSON.parse(view.private_metadata) : {};
             messageInfo = metadata.messageInfo || null;
@@ -693,35 +693,13 @@ router.post('/interactive',
               console.log('[DEBUG] Access token retrieved:', accessToken ? 'yes' : 'no');
               console.log('[DEBUG] Message info exists:', messageInfo ? 'yes' : 'no');
               
-              if (accessToken && messageInfo) {
+              if (accessToken && messageInfo && messageInfo.channel && messageInfo.ts) {
                 const slackClient = createSlackClient(accessToken);
                 
-                // First, get the current message to preserve its content
-                let currentMessage;
-                try {
-                  const messageResult = await slackClient.conversations.history({
-                    channel: messageInfo.channel,
-                    latest: messageInfo.ts,
-                    limit: 1,
-                    inclusive: true
-                  });
-                  
-                  if (messageResult.messages && messageResult.messages.length > 0) {
-                    currentMessage = messageResult.messages[0];
-                    console.log('[DEBUG] Retrieved current message from Slack');
-                  } else {
-                    console.log('[DEBUG] Could not find message in channel history');
-                    return; // Can't update if we can't find the message
-                  }
-                } catch (error: any) {
-                  console.error('[DEBUG] Error retrieving message from Slack:', error);
-                  return; // Can't update if we can't retrieve the message
-                }
-                
+                // Use stored blocks from when Split button was clicked
                 // Remove action blocks (buttons) from the message
-                const updatedBlocks = currentMessage.blocks
-                  ? currentMessage.blocks.filter((block: any) => block.type !== 'actions')
-                  : [];
+                const updatedBlocks = (messageInfo.blocks || [])
+                  .filter((block: any) => block.type !== 'actions');
                 
                 // Build split details text
                 const splitDetails = splitsWithNames.map((split, index) => {
@@ -741,7 +719,7 @@ router.post('/interactive',
                 const splitSummary = splitsWithNames.map(s => {
                   return `${s.categoryName} ($${parseFloat(s.amount).toFixed(2)})`;
                 }).join(', ');
-                const updatedText = `${currentMessage.text || 'Transaction'}\n✓ Transaction split: ${splitSummary}`;
+                const updatedText = `${messageInfo.text || 'Transaction'}\n✓ Transaction split: ${splitSummary}`;
                 
                 console.log('[DEBUG] Updating Slack message with:', {
                   channel: messageInfo.channel,
@@ -749,15 +727,31 @@ router.post('/interactive',
                   text: updatedText
                 });
                 
-                await slackClient.chat.update({
-                  channel: messageInfo.channel,
-                  ts: messageInfo.ts,
-                  text: updatedText,
-                  blocks: updatedBlocks as any
-                });
-                console.log('[DEBUG] Slack message updated successfully - buttons removed');
+                try {
+                  await slackClient.chat.update({
+                    channel: messageInfo.channel,
+                    ts: messageInfo.ts,
+                    text: updatedText,
+                    blocks: updatedBlocks as any
+                  });
+                  console.log('[DEBUG] Slack message updated successfully - buttons removed');
+                } catch (updateError: any) {
+                  console.error('[DEBUG] Error updating Slack message:', updateError);
+                  console.error('[DEBUG] Error details:', {
+                    error: updateError.message,
+                    code: updateError.code,
+                    data: updateError.data
+                  });
+                }
               } else {
                 console.log('[DEBUG] Skipping Slack message update - missing accessToken or messageInfo');
+                if (messageInfo) {
+                  console.log('[DEBUG] Message info details:', {
+                    hasChannel: !!messageInfo.channel,
+                    hasTs: !!messageInfo.ts,
+                    hasBlocks: !!(messageInfo.blocks && messageInfo.blocks.length > 0)
+                  });
+                }
               }
             } catch (error: any) {
               console.error('[DEBUG] Error updating transaction splits:', error);
@@ -1023,10 +1017,12 @@ router.post('/interactive',
                   continue;
                 }
 
-                // Store message info in private_metadata so we can update it later
+                // Store message info and blocks in private_metadata so we can update it later
                 const messageInfo = payload.message ? {
                   channel: payload.channel?.id || payload.message.channel,
-                  ts: payload.message.ts
+                  ts: payload.message.ts,
+                  blocks: payload.message.blocks || [], // Store original blocks
+                  text: payload.message.text || '' // Store original text
                 } : null;
                 
                 // Open first modal asking for number of splits
