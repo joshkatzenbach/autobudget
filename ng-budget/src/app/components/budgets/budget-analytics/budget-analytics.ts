@@ -210,7 +210,7 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
     });
 
     const labels = sorted.map(s => `${new Date(s.year, s.month - 1).toLocaleString('default', { month: 'short', year: 'numeric' })}`);
-    const data = sorted.map(s => parseFloat(s.accumulatedTotal));
+    const data = sorted.map(s => parseFloat(s.rolloverBalance));
 
     const chartData: ChartData<'line'> = {
       labels,
@@ -274,7 +274,7 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
     }
 
     const labels = savingsCategories.map(cat => cat.name);
-    const data = savingsCategories.map(cat => parseFloat(cat.accumulatedTotal || '0'));
+    const data = savingsCategories.map(cat => parseFloat(cat.rolloverBalance || '0'));
     const colors = savingsCategories.map(cat => cat.color || '#667eea');
 
     const chartData: ChartData<'bar'> = {
@@ -349,7 +349,7 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
   }
 
   getFixedCategorySavings(category: BudgetCategory): number {
-    return parseFloat(category.accumulatedTotal || '0');
+    return parseFloat(category.rolloverBalance || '0');
   }
 
   getFixedCategoryExpected(category: BudgetCategory): number {

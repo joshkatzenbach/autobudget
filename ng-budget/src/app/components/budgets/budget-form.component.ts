@@ -15,13 +15,10 @@ interface CategoryForm {
   allocatedAmount: string;
   allocatedAmountPeriod: 'monthly' | 'annual'; // Whether allocatedAmount is monthly or annual
   categoryType: CategoryType;
-  accumulatedTotal: string;
+  rolloverBalance: string;
   color: string | null;
   // Variable category fields
-  autoMoveSurplus?: boolean;
-  surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
+  autoSurplusDestination?: string | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -143,13 +140,10 @@ export class BudgetFormComponent implements OnInit {
             allocatedAmount: cat.allocatedAmount,
             allocatedAmountPeriod: 'monthly' as 'monthly' | 'annual', // Default to monthly, could be enhanced to detect
             categoryType: cat.categoryType,
-            accumulatedTotal: cat.accumulatedTotal || '0',
+            rolloverBalance: cat.rolloverBalance || '0',
             color: cat.color || this.getNextAvailableColor(),
             // Variable category fields
-            autoMoveSurplus: cat.autoMoveSurplus || false,
-            surplusTargetCategoryId: cat.surplusTargetCategoryId || null,
-            autoMoveDeficit: cat.autoMoveDeficit || false,
-            deficitSourceCategoryId: cat.deficitSourceCategoryId || null,
+            autoSurplusDestination: cat.autoSurplusDestination || null,
             // Fixed category fields
             expectedMerchantName: cat.expectedMerchantName || null,
             hideFromTransactionLists: cat.hideFromTransactionLists || false,
@@ -273,7 +267,7 @@ export class BudgetFormComponent implements OnInit {
         allocatedAmount: cat.allocatedAmount,
         spentAmount: '0',
         categoryType: 'savings' as CategoryType,
-        accumulatedTotal: cat.accumulatedTotal,
+        rolloverBalance: cat.rolloverBalance,
         color: cat.color,
         createdAt: '',
         updatedAt: '',
@@ -414,12 +408,9 @@ export class BudgetFormComponent implements OnInit {
         allocatedAmount: '',
         allocatedAmountPeriod: 'monthly',
         categoryType: 'variable',
-        accumulatedTotal: '0',
+        rolloverBalance: '0',
         color: this.getNextAvailableColor(),
-        autoMoveSurplus: false,
-        surplusTargetCategoryId: null,
-        autoMoveDeficit: false,
-        deficitSourceCategoryId: null,
+        autoSurplusDestination: null,
         expectedMerchantName: null,
         hideFromTransactionLists: false,
         isTaxDeductible: false,
@@ -441,7 +432,7 @@ export class BudgetFormComponent implements OnInit {
           allocatedAmount: remaining.toFixed(2),
           allocatedAmountPeriod: 'monthly',
           categoryType: 'surplus',
-          accumulatedTotal: '0',
+          rolloverBalance: '0',
           color: '#28a745'
         }
       ]);
@@ -674,7 +665,7 @@ export class BudgetFormComponent implements OnInit {
               name: cat.name,
               allocatedAmount: cat.allocatedAmount,
               categoryType: cat.categoryType,
-              accumulatedTotal: cat.accumulatedTotal,
+              rolloverBalance: cat.rolloverBalance,
               color: cat.color || null
             };
 
@@ -723,12 +714,9 @@ export class BudgetFormComponent implements OnInit {
         const categoryData: UpdateBudgetCategoryRequest = {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
-          accumulatedTotal: cat.accumulatedTotal || '0',
+          rolloverBalance: cat.rolloverBalance || '0',
           color: cat.color || null,
-          autoMoveSurplus: cat.autoMoveSurplus ?? false,
-          surplusTargetCategoryId: cat.surplusTargetCategoryId ?? null,
-          autoMoveDeficit: cat.autoMoveDeficit ?? false,
-          deficitSourceCategoryId: cat.deficitSourceCategoryId ?? null,
+          autoSurplusDestination: cat.autoSurplusDestination ?? null,
           expectedMerchantName: cat.expectedMerchantName ?? null,
           hideFromTransactionLists: cat.hideFromTransactionLists ?? false,
           isTaxDeductible: cat.isTaxDeductible ?? false,
@@ -743,12 +731,9 @@ export class BudgetFormComponent implements OnInit {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
           categoryType: cat.categoryType,
-          accumulatedTotal: cat.accumulatedTotal || '0',
+          rolloverBalance: cat.rolloverBalance || '0',
           color: cat.color || null,
-          autoMoveSurplus: cat.autoMoveSurplus ?? false,
-          surplusTargetCategoryId: cat.surplusTargetCategoryId ?? null,
-          autoMoveDeficit: cat.autoMoveDeficit ?? false,
-          deficitSourceCategoryId: cat.deficitSourceCategoryId ?? null,
+          autoSurplusDestination: cat.autoSurplusDestination ?? null,
           expectedMerchantName: cat.expectedMerchantName ?? null,
           hideFromTransactionLists: cat.hideFromTransactionLists ?? false,
           isTaxDeductible: cat.isTaxDeductible ?? false,

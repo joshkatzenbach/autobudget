@@ -25,16 +25,13 @@ export interface BudgetCategory {
   allocatedAmount: string;
   spentAmount: string;
   categoryType: CategoryType;
-  accumulatedTotal?: string;
+  rolloverBalance?: string;
   billCount?: number | null;
   thresholdAmount?: string | null;
   goalLimit?: string | null;
   color?: string | null;
   // Variable category fields
-  autoMoveSurplus?: boolean;
-  surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
+  autoSurplusDestination?: string | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -69,13 +66,10 @@ export interface CreateBudgetCategoryRequest {
   name: string;
   allocatedAmount: string;
   categoryType?: CategoryType;
-  accumulatedTotal?: string;
+  rolloverBalance?: string;
   color?: string | null;
   // Variable category fields
-  autoMoveSurplus?: boolean;
-  surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
+  autoSurplusDestination?: string | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -90,13 +84,10 @@ export interface UpdateBudgetCategoryRequest {
   allocatedAmount?: string;
   spentAmount?: string;
   categoryType?: CategoryType;
-  accumulatedTotal?: string;
+  rolloverBalance?: string;
   color?: string | null;
   // Variable category fields
-  autoMoveSurplus?: boolean;
-  surplusTargetCategoryId?: number | null;
-  autoMoveDeficit?: boolean;
-  deficitSourceCategoryId?: number | null;
+  autoSurplusDestination?: string | null;
   // Fixed category fields
   expectedMerchantName?: string | null;
   hideFromTransactionLists?: boolean;
@@ -147,7 +138,7 @@ export interface MonthlyCategorySummary {
   month: number;
   totalSpent: string;
   transactionCount: number;
-  accumulatedTotal?: string | null;
+  rolloverBalance?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,8 +150,11 @@ export interface FundMovement {
   fromCategoryId: number | null;
   toCategoryId: number | null;
   amount: string;
-  movementType: 'surplus' | 'deficit';
-  variableCategoryId: number;
+  transferType: 'surplus' | 'deficit';
+  relatedCategoryId: number | null;
+  sourceType: string;
+  isAutomatic: boolean;
+  description?: string | null;
   month: number;
   year: number;
   createdAt: string;
@@ -173,7 +167,7 @@ export interface SavingsSnapshot {
   categoryId: number;
   year: number;
   month: number;
-  accumulatedTotal: string;
+  rolloverBalance: string;
   createdAt: string;
 }
 

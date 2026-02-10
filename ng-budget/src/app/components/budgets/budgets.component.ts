@@ -307,7 +307,7 @@ export class BudgetsComponent implements OnInit {
         customName: null,
         type: 'depository',
         subtype: 'savings',
-        balance: parseFloat(cat.accumulatedTotal || '0'),
+        balance: parseFloat(cat.rolloverBalance || '0'),
         mask: null,
         institutionName: 'Unconnected Account',
         isAsset: true
@@ -1247,7 +1247,7 @@ export class BudgetsComponent implements OnInit {
 
   getTotalSavingsAmount(): number {
     return this.getSavingsCategories().reduce((sum, cat) => {
-      return sum + parseFloat(cat.accumulatedTotal || '0');
+      return sum + parseFloat(cat.rolloverBalance || '0');
     }, 0);
   }
 
@@ -1255,7 +1255,7 @@ export class BudgetsComponent implements OnInit {
     return this.categories()
       .filter(cat => cat.categoryType === 'savings' && cat.isUnconnectedAccount)
       .reduce((sum, cat) => {
-        return sum + parseFloat(cat.accumulatedTotal || '0');
+        return sum + parseFloat(cat.rolloverBalance || '0');
       }, 0);
   }
 
@@ -1292,7 +1292,7 @@ export class BudgetsComponent implements OnInit {
   }
 
   getSavingsCategoryAmount(category: BudgetCategory): number {
-    return parseFloat(category.accumulatedTotal || '0');
+    return parseFloat(category.rolloverBalance || '0');
   }
 }
 
