@@ -45,9 +45,11 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     );
 
     res.status(201).json(budget);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Create budget error:', error);
-    res.status(500).json({ error: 'Failed to create budget' });
+    const errorMessage = error.message || 'Failed to create budget';
+    const statusCode = error.message?.includes('already has a budget') ? 409 : 500;
+    res.status(statusCode).json({ error: errorMessage });
   }
 });
 

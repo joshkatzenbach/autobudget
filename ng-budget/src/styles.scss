@@ -25,3 +25,29 @@ $my-theme: mat.define-theme((
 html {
   @include mat.all-component-themes($my-theme);
 }
+
+// Global mobile responsive styles
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+// Mobile breakpoint
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+  
+  // Ensure touch targets are at least 44x44px
+  button, a, input[type="button"], input[type="submit"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

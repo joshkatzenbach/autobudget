@@ -2,6 +2,10 @@
   max-width: 900px;
   margin: 0 auto;
   padding: 40px 20px;
+
+  @media (max-width: 768px) {
+    padding: 20px 10px;
+  }
 }
 
 .header {
@@ -9,12 +13,22 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 30px;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  @media (max-width: 768px) {
+    margin-bottom: 20px;
+  }
 
   h1 {
     margin: 0;
     font-size: 32px;
     font-weight: 600;
     color: #1a1a1a;
+
+    @media (max-width: 768px) {
+      font-size: 24px;
+    }
   }
 
   .btn-secondary {
@@ -28,6 +42,13 @@
     font-weight: 500;
     text-decoration: none;
     transition: background 0.2s;
+    min-height: 44px; // Touch-friendly
+
+    @media (max-width: 768px) {
+      width: 100%;
+      padding: 12px 20px;
+      font-size: 16px;
+    }
 
     &:hover {
       background: #e5e7eb;
@@ -325,6 +346,12 @@
       font-weight: 500;
       cursor: pointer;
       transition: background 0.2s;
+      min-height: 44px; // Touch-friendly
+
+      @media (max-width: 768px) {
+        padding: 14px;
+        font-size: 16px;
+      }
 
       &.btn-primary {
         background: #4f46e5;
@@ -378,6 +405,12 @@
       resize: vertical;
       min-height: 80px;
 
+      @media (max-width: 768px) {
+        padding: 14px;
+        font-size: 16px; // Prevent zoom on iOS
+        min-height: 100px;
+      }
+
       &:focus {
         outline: none;
         border-color: #4f46e5;
@@ -399,6 +432,14 @@
       font-weight: 500;
       cursor: pointer;
       transition: background 0.2s;
+      min-height: 44px; // Touch-friendly
+
+      @media (max-width: 768px) {
+        width: 100%;
+        align-self: stretch;
+        padding: 14px 20px;
+        font-size: 16px;
+      }
 
       &.btn-primary {
         background: #4f46e5;

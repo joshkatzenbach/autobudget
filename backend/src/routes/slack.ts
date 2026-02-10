@@ -989,96 +989,100 @@ router.post('/interactive',
                 }
               } else if (action.action_id === 'transaction_split') {
                 // User clicked "Split" button - first ask how many splits
-                const transactionId = parseInt(action.value.split('_')[1], 10);
-                if (isNaN(transactionId)) {
-                  console.error('Invalid transaction ID in split button click');
-                  continue;
-                }
+                try {
+                  const transactionId = parseInt(action.value.split('_')[1], 10);
+                  if (isNaN(transactionId)) {
+                    console.error('Invalid transaction ID in split button click');
+                    continue;
+                  }
 
-                // Get transaction details
-                const [transaction] = await db
-                  .select({ 
-                    userId: plaidTransactions.userId,
-                    amount: plaidTransactions.amount
-                  })
-                  .from(plaidTransactions)
-                  .where(eq(plaidTransactions.id, transactionId))
-                  .limit(1);
+                  // Get transaction details
+                  const [transaction] = await db
+                    .select({
+                      userId: plaidTransactions.userId,
+                      amount: plaidTransactions.amount
+                    })
+                    .from(plaidTransactions)
+                    .where(eq(plaidTransactions.id, transactionId))
+                    .limit(1);
 
-                if (!transaction) {
-                  console.error(`Transaction ${transactionId} not found`);
-                  continue;
-                }
+                  if (!transaction) {
+                    console.error(`Transaction ${transactionId} not found`);
+                    continue;
+                  }
 
-                // Get user's access token
-                const accessToken = await getUserAccessToken(transaction.userId);
-                if (!accessToken) {
-                  console.error(`No Slack access token for user ${transaction.userId}`);
-                  continue;
-                }
+                  // Get user's access token
+                  const accessToken = await getUserAccessToken(transaction.userId);
+                  if (!accessToken) {
+                    console.error(`No Slack access token for user ${transaction.userId}`);
+                    continue;
+                  }
 
-                // Store message info and blocks in private_metadata so we can update it later
-                const messageInfo = payload.message ? {
-                  channel: payload.channel?.id || payload.message.channel,
-                  ts: payload.message.ts,
-                  blocks: payload.message.blocks || [], // Store original blocks
-                  text: payload.message.text || '' // Store original text
-                } : null;
-                
-                // Open first modal asking for number of splits
-                const transactionAmount = Math.abs(parseFloat(transaction.amount));
-                const numSplitsModal = {
-                  type: 'modal' as const,
-                  callback_id: `num_splits_${transactionId}`,
-                  private_metadata: JSON.stringify({
-                    transactionId,
-                    messageInfo // Store message channel and timestamp
-                  }),
-                  title: {
-                    type: 'plain_text' as const,
-                    text: 'Split Transaction'
-                  },
-                  submit: {
-                    type: 'plain_text' as const,
-                    text: 'Continue'
-                  },
-                  close: {
-                    type: 'plain_text' as const,
-                    text: 'Cancel'
-                  },
-                  blocks: [
-                    {
-                      type: 'section' as const,
-                      text: {
-                        type: 'mrkdwn' as const,
-                        text: `*Transaction Amount:* $${transactionAmount.toFixed(2)}\n\nHow many ways would you like to split this transaction?`
-                      }
+                  // Store message info and blocks in private_metadata so we can update it later
+                  const messageInfo = payload.message ? {
+                    channel: payload.channel?.id || payload.message.channel,
+                    ts: payload.message.ts,
+                    blocks: payload.message.blocks || [], // Store original blocks
+                    text: payload.message.text || '' // Store original text
+                  } : null;
+
+                  // Open first modal asking for number of splits
+                  const transactionAmount = Math.abs(parseFloat(transaction.amount));
+                  const numSplitsModal = {
+                    type: 'modal' as const,
+                    callback_id: `num_splits_${transactionId}`,
+                    private_metadata: JSON.stringify({
+                      transactionId,
+                      messageInfo // Store message channel and timestamp
+                    }),
+                    title: {
+                      type: 'plain_text' as const,
+                      text: 'Split Transaction'
                     },
-                    {
-                      type: 'input' as const,
-                      block_id: 'num_splits',
-                      label: {
-                        type: 'plain_text' as const,
-                        text: 'Number of Splits'
+                    submit: {
+                      type: 'plain_text' as const,
+                      text: 'Continue'
+                    },
+                    close: {
+                      type: 'plain_text' as const,
+                      text: 'Cancel'
+                    },
+                    blocks: [
+                      {
+                        type: 'section' as const,
+                        text: {
+                          type: 'mrkdwn' as const,
+                          text: `*Transaction Amount:* $${transactionAmount.toFixed(2)}\n\nHow many ways would you like to split this transaction?`
+                        }
                       },
-                      element: {
-                        type: 'plain_text_input' as const,
-                        action_id: 'num_splits_input',
-                        placeholder: {
+                      {
+                        type: 'input' as const,
+                        block_id: 'num_splits',
+                        label: {
                           type: 'plain_text' as const,
-                          text: 'e.g., 2, 3, 4...'
+                          text: 'Number of Splits'
                         },
-                        initial_value: '2'
+                        element: {
+                          type: 'plain_text_input' as const,
+                          action_id: 'num_splits_input',
+                          placeholder: {
+                            type: 'plain_text' as const,
+                            text: 'e.g., 2, 3, 4...'
+                          },
+                          initial_value: '2'
+                        }
                       }
-                    }
-                  ]
-                } as any;
+                    ]
+                  } as any;
 
-                const slackClient = createSlackClient(accessToken);
-                await slackClient.views.open({
-                  trigger_id: payload.trigger_id,
-                  view: numSplitsModal
-                });
+                  const slackClient = createSlackClient(accessToken);
+                  await slackClient.views.open({
+                    trigger_id: payload.trigger_id,
+                    view: numSplitsModal
+                  });
+                } catch (error: any) {
+                  console.error('Error opening split modal:', error);
+                }
               }
             }
           }

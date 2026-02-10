@@ -2,6 +2,10 @@
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
+
+  @media (max-width: 768px) {
+    padding: 10px;
+  }
 }
 
 // Tab Navigation
@@ -12,6 +16,16 @@
   margin: 0;
   background: white;
   padding: 0 20px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; // Firefox
+  &::-webkit-scrollbar {
+    display: none; // Chrome/Safari
+  }
+
+  @media (max-width: 768px) {
+    padding: 0 10px;
+  }
 
   .tab-button {
     padding: 12px 24px;
@@ -24,6 +38,14 @@
     color: #666;
     transition: all 0.2s;
     margin-bottom: -2px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-height: 44px; // Touch-friendly
+
+    @media (max-width: 768px) {
+      padding: 12px 16px;
+      font-size: 14px;
+    }
 
     &:hover {
       color: #333;
@@ -44,10 +66,29 @@
   display: flex;
   justify-content: flex-start;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  @media (max-width: 768px) {
+    margin-bottom: 15px;
+    flex-direction: column;
+    align-items: stretch;
+
+    button {
+      width: 100%;
+    }
+  }
 }
 
 .transactions-actions {
   margin-bottom: 20px;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+
+  @media (max-width: 768px) {
+    margin-bottom: 15px;
+  }
 
   .sync-controls {
     display: flex;
@@ -55,15 +96,31 @@
     gap: 15px;
     flex-wrap: wrap;
 
+    @media (max-width: 768px) {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+
     .month-selector {
       display: flex;
       align-items: center;
       gap: 10px;
 
+      @media (max-width: 768px) {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+
       label {
         font-weight: 500;
         color: #333;
         white-space: nowrap;
+
+        @media (max-width: 768px) {
+          white-space: normal;
+        }
       }
 
       select {
@@ -75,6 +132,13 @@
         color: #333;
         cursor: pointer;
         min-width: 250px;
+        min-height: 44px; // Touch-friendly
+
+        @media (max-width: 768px) {
+          min-width: 100%;
+          width: 100%;
+          font-size: 16px; // Prevent zoom on iOS
+        }
 
         &:hover {
           border-color: #667eea;
@@ -94,9 +158,6 @@
       }
     }
   }
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
 }
 
 .tab-content {
@@ -105,6 +166,12 @@
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   min-height: 400px;
+
+  @media (max-width: 768px) {
+    padding: 15px;
+    border-radius: 0;
+    min-height: auto;
+  }
 }
 
 .summary-tab {
@@ -129,11 +196,22 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     margin-top: 20px;
 
+    @media (max-width: 768px) {
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 8px;
+    }
+
     h3 {
       margin: 0 0 20px 0;
       color: #333;
       font-size: 20px;
       font-weight: 600;
+
+      @media (max-width: 768px) {
+        font-size: 18px;
+        margin-bottom: 15px;
+      }
     }
 
     .breakdown-total {
@@ -145,16 +223,33 @@
       border-radius: 8px;
       margin-bottom: 20px;
       border: 2px solid #667eea;
+      flex-wrap: wrap;
+      gap: 10px;
+
+      @media (max-width: 768px) {
+        padding: 12px;
+        margin-bottom: 15px;
+        flex-direction: column;
+        align-items: flex-start;
+      }
 
       .total-label {
         font-size: 16px;
         font-weight: 600;
         color: #333;
+
+        @media (max-width: 768px) {
+          font-size: 14px;
+        }
       }
 
       .total-amount {
         font-size: 24px;
         font-weight: 700;
+
+        @media (max-width: 768px) {
+          font-size: 20px;
+        }
 
         &.positive {
           color: #28a745;
@@ -250,10 +345,21 @@
     flex-wrap: wrap;
     gap: 15px;
 
+    @media (max-width: 768px) {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
     h2 {
       margin: 0;
       color: #333;
       font-size: 20px;
+
+      @media (max-width: 768px) {
+        font-size: 18px;
+      }
     }
 
     .filters {
@@ -261,6 +367,13 @@
       align-items: center;
       gap: 20px;
       flex-wrap: wrap;
+
+      @media (max-width: 768px) {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        width: 100%;
+      }
     }
 
     .review-filter {
@@ -268,9 +381,20 @@
       align-items: center;
       gap: 10px;
 
+      @media (max-width: 768px) {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        width: 100%;
+      }
+
       label {
         font-weight: 500;
         color: #555;
+
+        @media (max-width: 768px) {
+          font-size: 14px;
+        }
       }
 
       select {
@@ -280,6 +404,13 @@
         font-size: 14px;
         background: white;
         cursor: pointer;
+        min-height: 44px; // Touch-friendly
+
+        @media (max-width: 768px) {
+          width: 100%;
+          padding: 12px;
+          font-size: 16px; // Prevent zoom on iOS
+        }
 
         &:focus {
           outline: none;
@@ -312,10 +443,21 @@
 
   .transactions-table {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+
+    @media (max-width: 768px) {
+      margin: 0 -15px;
+      padding: 0 15px;
+    }
 
     table {
       width: 100%;
       border-collapse: collapse;
+      min-width: 600px; // Ensure table doesn't get too compressed
+
+      @media (max-width: 768px) {
+        font-size: 12px;
+      }
 
       thead {
         background: #f5f5f5;
@@ -326,6 +468,11 @@
           font-weight: 600;
           color: #333;
           border-bottom: 2px solid #ddd;
+
+          @media (max-width: 768px) {
+            padding: 8px 6px;
+            font-size: 11px;
+          }
         }
 
         .col-date {
@@ -369,6 +516,11 @@
           font-size: 14px;
           color: #333;
 
+          @media (max-width: 768px) {
+            padding: 8px 6px;
+            font-size: 12px;
+          }
+
           &.incoming {
             color: #28a745;
             font-weight: 500;
@@ -405,6 +557,12 @@
       align-items: center;
       gap: 8px;
       min-height: 32px;
+
+      @media (max-width: 768px) {
+        grid-template-columns: 30px 80px 1fr;
+        gap: 6px;
+        min-height: 40px;
+      }
 
       // Ensure all child elements respect grid placement
       > * {
@@ -702,15 +860,31 @@
     padding: 15px;
     background: #f8f9fa;
     border-radius: 8px;
+    flex-wrap: wrap;
+    gap: 10px;
+
+    @media (max-width: 768px) {
+      padding: 12px;
+      flex-direction: column;
+      align-items: flex-start;
+    }
 
     .balance-label {
       font-weight: 600;
       color: #555;
+
+      @media (max-width: 768px) {
+        font-size: 14px;
+      }
     }
 
     .balance-amount {
       font-size: 24px;
       font-weight: 700;
+
+      @media (max-width: 768px) {
+        font-size: 20px;
+      }
 
       &.positive {
         color: #28a745;
@@ -726,6 +900,11 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 15px;
+
+    @media (max-width: 768px) {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
 
     .breakdown-item {
       display: flex;
@@ -791,6 +970,14 @@
     border-radius: 6px;
     border-left: 3px solid transparent;
     transition: background 0.2s;
+    flex-wrap: wrap;
+    gap: 10px;
+
+    @media (max-width: 768px) {
+      padding: 10px 12px;
+      flex-direction: column;
+      align-items: flex-start;
+    }
 
     &.asset {
       border-left-color: #28a745;
@@ -910,6 +1097,14 @@
       min-width: 100px;
       text-align: right;
 
+      @media (max-width: 768px) {
+        min-width: auto;
+        width: 100%;
+        text-align: left;
+        font-size: 18px;
+        margin-top: 8px;
+      }
+
       &.positive {
         color: #28a745;
       }
@@ -929,6 +1124,10 @@
   margin-bottom: 30px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 
+  @media (max-width: 768px) {
+    margin-bottom: 15px;
+  }
+
   .header-top {
     display: flex;
     justify-content: space-between;
@@ -936,10 +1135,20 @@
     padding: 20px 0;
     border-bottom: 2px solid #eee;
 
+    @media (max-width: 768px) {
+      padding: 15px 0;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
     h1 {
       margin: 0;
       color: #333;
       font-size: 32px;
+
+      @media (max-width: 768px) {
+        font-size: 24px;
+      }
     }
   }
 }
@@ -958,6 +1167,13 @@
   cursor: pointer;
   font-weight: 600;
   transition: background 0.3s;
+  min-height: 44px; // Touch-friendly
+
+  @media (max-width: 768px) {
+    padding: 12px 20px;
+    font-size: 16px;
+    width: 100%;
+  }
 
   &:hover {
     background: #5568d3;
@@ -973,6 +1189,12 @@
   cursor: pointer;
   font-weight: 600;
   transition: background 0.3s;
+  min-height: 44px; // Touch-friendly
+
+  @media (max-width: 768px) {
+    padding: 12px 20px;
+    font-size: 16px;
+  }
 
   &:hover {
     background: #5a6268;
@@ -1091,6 +1313,12 @@
   justify-content: center;
   z-index: 1000;
   padding: 20px;
+
+  @media (max-width: 768px) {
+    padding: 10px;
+    align-items: flex-start;
+    padding-top: 20px;
+  }
 }
 
 .modal-content {
@@ -1102,6 +1330,13 @@
   overflow-y: auto;
   overflow-x: hidden;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  -webkit-overflow-scrolling: touch;
+
+  @media (max-width: 768px) {
+    max-height: 95vh;
+    border-radius: 8px;
+    max-width: 100%;
+  }
 }
 
 .modal-header {
@@ -1111,10 +1346,18 @@
   padding: 20px;
   border-bottom: 1px solid #eee;
 
+  @media (max-width: 768px) {
+    padding: 15px;
+  }
+
   h2 {
     margin: 0;
     color: #333;
     font-size: 24px;
+
+    @media (max-width: 768px) {
+      font-size: 20px;
+    }
   }
 
   .btn-close {
@@ -1131,6 +1374,14 @@
     justify-content: center;
     border-radius: 4px;
     transition: all 0.2s;
+    min-width: 44px; // Touch-friendly
+    min-height: 44px;
+
+    @media (max-width: 768px) {
+      width: 44px;
+      height: 44px;
+      font-size: 32px;
+    }
 
     &:hover {
       background: #f5f5f5;
@@ -1143,6 +1394,10 @@
   padding: 20px;
   min-width: 0; // Prevent overflow
   overflow-x: hidden;
+
+  @media (max-width: 768px) {
+    padding: 15px;
+  }
 }
 
 .transaction-details {
@@ -1244,6 +1499,11 @@
     margin-bottom: 20px;
     min-width: 0; // Prevent overflow
     overflow-x: hidden;
+
+    @media (max-width: 768px) {
+      gap: 12px;
+      margin-bottom: 15px;
+    }
   }
 
   .split-row {
@@ -1255,6 +1515,12 @@
     background: #f9f9f9;
     border-radius: 6px;
     border: 1px solid #e0e0e0;
+
+    @media (max-width: 768px) {
+      grid-template-columns: 1fr;
+      gap: 10px;
+      padding: 10px;
+    }
 
     .remove-split-btn {
       grid-column: 1;
@@ -1355,10 +1621,26 @@
     background: #f8f9fa;
     border-radius: 6px;
     border: 1px solid #e0e0e0;
+    flex-wrap: wrap;
+    gap: 10px;
+
+    @media (max-width: 768px) {
+      flex-direction: column;
+      align-items: stretch;
+      padding: 12px;
+      margin-bottom: 15px;
+    }
 
     .btn-secondary {
       padding: 6px 12px;
       font-size: 14px;
+      min-height: 44px; // Touch-friendly
+
+      @media (max-width: 768px) {
+        width: 100%;
+        padding: 12px;
+        font-size: 16px;
+      }
     }
 
     .split-total {
@@ -1367,6 +1649,11 @@
       align-items: flex-end;
       gap: 4px;
       font-size: 14px;
+
+      @media (max-width: 768px) {
+        align-items: flex-start;
+        width: 100%;
+      }
 
       .transaction-total {
         color: #666;
@@ -1607,6 +1894,16 @@
   gap: 12px;
   padding: 20px;
   border-top: 1px solid #eee;
+
+  @media (max-width: 768px) {
+    flex-direction: column-reverse;
+    padding: 15px;
+    gap: 10px;
+
+    button {
+      width: 100%;
+    }
+  }
 }
 
 .modal-option {

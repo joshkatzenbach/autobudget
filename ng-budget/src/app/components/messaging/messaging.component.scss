@@ -2,6 +2,10 @@
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
+
+  @media (max-width: 768px) {
+    padding: 10px;
+  }
 }
 
 .header {
@@ -9,12 +13,22 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 30px;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  @media (max-width: 768px) {
+    margin-bottom: 20px;
+  }
 
   h1 {
     margin: 0;
     font-size: 32px;
     font-weight: 600;
     color: #1a1a1a;
+
+    @media (max-width: 768px) {
+      font-size: 24px;
+    }
   }
 
   .refresh-btn {
@@ -27,6 +41,13 @@
     font-size: 14px;
     font-weight: 500;
     transition: background 0.2s;
+    min-height: 44px; // Touch-friendly
+
+    @media (max-width: 768px) {
+      width: 100%;
+      padding: 12px 20px;
+      font-size: 16px;
+    }
 
     &:hover:not(:disabled) {
       background: #4338ca;
@@ -168,6 +189,12 @@
 
   @media (max-width: 968px) {
     grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  @media (max-width: 768px) {
+    gap: 15px;
+    margin-bottom: 20px;
   }
 }
 
@@ -219,6 +246,12 @@
       font-size: 14px;
       font-family: inherit;
       transition: border-color 0.2s, box-shadow 0.2s;
+      min-height: 44px; // Touch-friendly
+
+      @media (max-width: 768px) {
+        padding: 14px;
+        font-size: 16px; // Prevent zoom on iOS
+      }
 
       &:focus {
         outline: none;
@@ -292,6 +325,12 @@
     font-weight: 500;
     cursor: pointer;
     transition: background 0.2s;
+    min-height: 44px; // Touch-friendly
+
+    @media (max-width: 768px) {
+      padding: 14px;
+      font-size: 16px;
+    }
 
     &.btn-primary {
       background: #4f46e5;
@@ -362,6 +401,11 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 16px;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
 }
 
 .channel-item {

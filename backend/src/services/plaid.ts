@@ -273,4 +273,3 @@ export async function fireTestWebhook(accessToken: string, webhookCode: string =
     throw error;
   }
 }
-

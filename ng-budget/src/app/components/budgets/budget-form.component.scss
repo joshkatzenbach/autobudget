@@ -2,6 +2,10 @@
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
+
+  @media (max-width: 768px) {
+    padding: 10px;
+  }
 }
 
 .budget-form-card {
@@ -9,6 +13,13 @@
   border-radius: 12px;
   padding: 30px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: visible;
+
+  @media (max-width: 768px) {
+    padding: 15px;
+    border-radius: 8px;
+    overflow: visible;
+  }
 }
 
 .form-header {
@@ -53,15 +64,25 @@
 
   @media (max-width: 1200px) {
     grid-template-columns: 1fr;
+    gap: 20px;
     
     .right-pane {
       order: -1;
     }
   }
+
+  @media (max-width: 768px) {
+    gap: 15px;
+  }
 }
 
 .left-pane {
   min-width: 0;
+  z-index: 1;
+
+  @media (max-width: 768px) {
+    z-index: auto;
+  }
 }
 
 .right-pane {
@@ -69,15 +90,33 @@
   top: 20px;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
+  z-index: 0;
+
+  @media (max-width: 768px) {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+    z-index: auto;
+    margin-bottom: 20px;
+  }
 }
 
 .form-section {
   margin-bottom: 40px;
 
+  @media (max-width: 768px) {
+    margin-bottom: 30px;
+  }
+
   h2 {
     margin: 0 0 20px 0;
     color: #333;
     font-size: 20px;
+
+    @media (max-width: 768px) {
+      font-size: 18px;
+      margin-bottom: 15px;
+    }
   }
 }
 
@@ -93,9 +132,29 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+    align-items: flex-start;
+    margin-bottom: 15px;
+  }
 
   h2 {
     margin: 0;
+
+    @media (max-width: 768px) {
+      font-size: 18px;
+    }
+  }
+
+  .btn-reset {
+    @media (max-width: 768px) {
+      width: 100%;
+      min-height: 44px;
+      font-size: 14px;
+    }
   }
 }
 
@@ -174,6 +233,12 @@
     box-sizing: border-box;
     transition: border-color 0.3s;
     font-family: inherit;
+    min-height: 44px; // Touch-friendly
+
+    @media (max-width: 768px) {
+      padding: 14px;
+      font-size: 16px; // Prevent zoom on iOS
+    }
 
     &:focus {
       outline: none;
@@ -196,6 +261,11 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
 }
 
 .checkbox-label {
@@ -359,12 +429,23 @@
   margin-bottom: 20px;
   border: 1px solid #e0e0e0;
 
+  @media (max-width: 768px) {
+    padding: 15px;
+    margin-bottom: 15px;
+  }
+
   h3 {
     margin: 0 0 15px 0;
     color: #333;
     font-size: 18px;
     border-bottom: 2px solid #667eea;
     padding-bottom: 8px;
+
+    @media (max-width: 768px) {
+      font-size: 16px;
+      margin-bottom: 12px;
+      padding-bottom: 6px;
+    }
   }
 }
 
@@ -562,6 +643,17 @@
   margin-top: 30px;
   padding-top: 20px;
   border-top: 2px solid #eee;
+
+  @media (max-width: 768px) {
+    flex-direction: column-reverse;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 15px;
+
+    button {
+      width: 100%;
+    }
+  }
 }
 
 .btn-primary,
@@ -573,6 +665,12 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+  min-height: 44px; // Touch-friendly
+
+  @media (max-width: 768px) {
+    padding: 14px 24px;
+    font-size: 16px;
+  }
 }
 
 .btn-primary {
