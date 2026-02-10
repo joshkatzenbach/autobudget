@@ -1,6 +1,6 @@
 -- Add plaid_webhooks table to store all Plaid webhook calls for debugging and monitoring
 
-CREATE TABLE "plaid_webhooks" (
+CREATE TABLE IF NOT EXISTS "plaid_webhooks" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"item_id" varchar(255),
 	"webhook_type" varchar(100) NOT NULL,
