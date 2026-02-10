@@ -80,14 +80,14 @@ export async function sendTransactionNotification(
     // Get user's Slack notification channel
     const notificationChannelId = await getNotificationChannel(userId);
     if (!notificationChannelId) {
-      console.log(`No Slack notification channel configured for user ${userId}`);
+      console.log(`[NOTIFICATION] No Slack channel configured for user ${userId}`);
       return;
     }
 
     // Get user's access token
     const accessToken = await getUserAccessToken(userId);
     if (!accessToken) {
-      console.log(`No Slack access token for user ${userId}`);
+      console.log(`[NOTIFICATION] No Slack access token for user ${userId}`);
       return;
     }
 
@@ -99,13 +99,13 @@ export async function sendTransactionNotification(
       .limit(1);
 
     if (!transaction) {
-      console.error(`Transaction ${transactionId} not found`);
+      console.error(`[NOTIFICATION] Transaction ${transactionId} not found`);
       return;
     }
 
     // Check if notification has already been sent
     if (transaction.notificationSent) {
-      console.log(`Transaction ${transactionId} notification already sent, skipping`);
+      console.log(`[NOTIFICATION] Transaction ${transactionId} already sent, skipping`);
       return;
     }
 
@@ -139,7 +139,7 @@ export async function sendTransactionNotification(
       .limit(1);
 
     if (!budget) {
-      console.error(`No active budget found for user ${userId}`);
+      console.error(`[NOTIFICATION] No active budget for user ${userId}`);
       return;
     }
 
@@ -347,6 +347,8 @@ export async function sendTransactionNotification(
       blocks: blocks
     });
 
+    console.log(`[NOTIFICATION] Sent for txn ${transactionId} to channel ${notificationChannelId} (user ${userId})`);
+
     // Mark notification as sent after successful send
     await db
       .update(plaidTransactions)
@@ -357,7 +359,7 @@ export async function sendTransactionNotification(
       .where(eq(plaidTransactions.id, transactionId));
 
   } catch (error: any) {
-    console.error('Error sending transaction notification to Slack:', error);
+    console.error(`[NOTIFICATION] Error sending for txn ${transactionId}:`, error);
     // Don't throw - we don't want to fail the webhook if Slack fails
     // Don't mark as sent if there was an error
   }
@@ -400,7 +402,7 @@ export async function sendVariableSurplusDeficitNotification(
       .limit(1);
 
     if (!budget) {
-      console.error(`No active budget found for user ${userId}`);
+      console.error(`[NOTIFICATION] No active budget for user ${userId}`);
       return;
     }
 

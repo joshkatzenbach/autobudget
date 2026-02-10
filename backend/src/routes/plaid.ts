@@ -42,7 +42,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
       .returning();
     
     webhookRecordId = webhookRecord.id;
-    console.log(`[WEBHOOK] Stored webhook #${webhookRecordId}: ${webhook_type} for item ${item_id || 'N/A'}`);
+    console.log(`[WEBHOOK] Stored webhook #${webhookRecordId}: ${webhook_type}/${webhook_code} for item ${item_id || 'N/A'}`);
 
     // Acknowledge receipt immediately
     res.status(200).json({ received: true });
@@ -66,6 +66,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
       const decryptedAccessToken = decrypt(plaidItem.accessToken);
       
       // Sync transactions using the stored cursor (or null for initial sync)
+      console.log(`[SYNC] Starting sync for item ${item_id} (cursor: ${plaidItem.transactionsCursor ? 'exists' : 'none'})`);
       let currentCursor = plaidItem.transactionsCursor || null;
       let hasMore = true;
       let totalAdded = 0;
@@ -107,6 +108,8 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
               plaidCategoryId,
               tx.pending || false
             );
+
+            console.log(`[SYNC] Stored transaction ${tx.transaction_id} (${tx.merchant_name || tx.name}, $${amountToStore})`);
 
             // Check if notification has already been sent (prevents duplicate notifications)
             if (!storedTx.notificationSent) {
@@ -203,55 +206,63 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
           ))
           .limit(1);
 
-        if (userBudget) {
-          try {
-            let plaidCategoryForLLM: string[] | null = null;
-            if (tx.personal_finance_category) {
-              plaidCategoryForLLM = [
-                tx.personal_finance_category.primary,
-                tx.personal_finance_category.detailed,
-              ];
-            } else if (tx.category) {
-              plaidCategoryForLLM = tx.category;
-            }
+        if (!userBudget) {
+          console.log(`[CATEGORIZE] No active budget for user ${plaidItem.userId}, skipping categorization`);
+          return;
+        }
 
-            const categorizationResult = await categorizeTransaction({
-              amount: parseFloat(tx.amount.toString()),
-              merchantName: tx.merchant_name || null,
-              plaidCategory: plaidCategoryForLLM,
-              userId: plaidItem.userId,
-              transactionName: tx.name || null,
-            });
-
-            if (categorizationResult.categoryId) {
-              await assignTransactionCategory(
-                storedTx.id,
-                categorizationResult.categoryId,
-                tx.amount.toString(),
-                false // LLM-assigned
-              );
-
-              // Send Slack notification
-              try {
-                await sendTransactionNotification(
-                  plaidItem.userId,
-                  storedTx.id,
-                  categorizationResult.categoryId
-                );
-              } catch (slackError: any) {
-                console.error(`Error sending Slack notification:`, slackError);
-              }
-            }
-          } catch (error: any) {
-            console.error(`Error categorizing transaction:`, error);
+        try {
+          let plaidCategoryForLLM: string[] | null = null;
+          if (tx.personal_finance_category) {
+            plaidCategoryForLLM = [
+              tx.personal_finance_category.primary,
+              tx.personal_finance_category.detailed,
+            ];
+          } else if (tx.category) {
+            plaidCategoryForLLM = tx.category;
           }
+
+          const categorizationResult = await categorizeTransaction({
+            amount: parseFloat(tx.amount.toString()),
+            merchantName: tx.merchant_name || null,
+            plaidCategory: plaidCategoryForLLM,
+            userId: plaidItem.userId,
+            transactionName: tx.name || null,
+          });
+
+          console.log(`[CATEGORIZE] txn ${storedTx.id} (${tx.merchant_name || tx.name}, $${tx.amount}) → categoryId: ${categorizationResult.categoryId}`);
+
+          if (categorizationResult.categoryId) {
+            await assignTransactionCategory(
+              storedTx.id,
+              categorizationResult.categoryId,
+              tx.amount.toString(),
+              false // LLM-assigned
+            );
+
+            // Send Slack notification
+            try {
+              await sendTransactionNotification(
+                plaidItem.userId,
+                storedTx.id,
+                categorizationResult.categoryId
+              );
+            } catch (slackError: any) {
+              console.error(`[NOTIFICATION] Error sending Slack notification for txn ${storedTx.id}:`, slackError);
+            }
+          } else {
+            console.log(`[CATEGORIZE] No category assigned for txn ${storedTx.id}, skipping notification`);
+          }
+        } catch (error: any) {
+          console.error(`[CATEGORIZE] Error categorizing txn ${storedTx.id}:`, error);
         }
       };
 
       // Continue syncing until all updates are fetched
       while (hasMore) {
         const syncResult = await syncTransactions(decryptedAccessToken, currentCursor);
-        
+        console.log(`[SYNC] Batch: ${syncResult.added.length} added, ${syncResult.modified.length} modified, ${syncResult.removed.length} removed`);
+
         // Process added transactions
         for (const tx of syncResult.added) {
           totalAdded++;

@@ -122,6 +122,8 @@ export async function verifyPlaidWebhook(req: Request, res: Response, next: Next
       }
 
       // All checks passed
+      const webhookBody = req.body || {};
+      console.log(`[WEBHOOK] Verified successfully for item ${webhookBody.item_id || 'unknown'}`);
       next();
     } catch (error: any) {
       if (error.code === 'ERR_JWT_EXPIRED' || error.code === 'ERR_JWT_CLAIM_VALIDATION_FAILED') {

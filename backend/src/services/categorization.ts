@@ -83,11 +83,14 @@ function detectTransferTransaction(
 export async function categorizeTransaction(params: CategorizeTransactionParams): Promise<CategorizeTransactionResult> {
   const { amount, merchantName, plaidCategory, userId, budgetId: providedBudgetId, transactionName } = params;
 
+  console.log(`[CATEGORIZE] Processing (${merchantName || transactionName || 'unknown'}, $${amount.toFixed(2)}) for user ${userId}`);
+
   // Get user's budget ID if not provided
   let budgetId = providedBudgetId;
   if (!budgetId) {
     const budget = await getUserBudget(userId);
     if (!budget) {
+      console.log(`[CATEGORIZE] No budget found for user ${userId}`);
       return { categoryId: null }; // No budget exists
     }
     budgetId = budget.id;
@@ -96,6 +99,7 @@ export async function categorizeTransaction(params: CategorizeTransactionParams)
   // Get available budget categories
   const allCategories = await getBudgetCategories(userId);
   if (!allCategories || allCategories.length === 0) {
+    console.log(`[CATEGORIZE] No categories found for user ${userId}`);
     return { categoryId: null };
   }
 
@@ -109,6 +113,7 @@ export async function categorizeTransaction(params: CategorizeTransactionParams)
   if (detectTransferTransaction(merchantName ?? null, plaidCategory, transactionName ?? null)) {
     const excludedCategory = categories.find(cat => cat.categoryType === 'excluded');
     if (excludedCategory) {
+      console.log(`[CATEGORIZE] Transfer detected for ${merchantName || transactionName}, using Excluded category ${excludedCategory.id}`);
       return { categoryId: excludedCategory.id };
     }
   }
@@ -212,10 +217,12 @@ Return ONLY the JSON object, nothing else.`;
       if (categoryId !== null) {
         const category = categories.find(cat => cat.id === categoryId);
         if (!category) {
+          console.log(`[CATEGORIZE] Result for ${merchantName || 'unknown'}: categoryId=${categoryId} (not in budget, returning null)`);
           return { categoryId: null };
         }
       }
 
+      console.log(`[CATEGORIZE] Result for ${merchantName || 'unknown'}: categoryId=${categoryId}`);
       return { categoryId };
     } catch (parseError) {
       console.error('Error parsing LLM response:', parseError);

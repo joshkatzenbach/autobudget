@@ -70,9 +70,7 @@ app.use('/api/slack/interactive',
   express.urlencoded({ 
     extended: false, 
     verify: (req: any, res, buf) => {
-      console.log('[DEBUG] Capturing raw body via verify callback, length:', buf.length);
       req.rawBody = buf;
-      console.log('[DEBUG] Raw body preview (first 200 chars):', buf.toString('utf8').substring(0, 200));
     }
   })
 );
