@@ -464,13 +464,7 @@ router.post('/interactive',
                         blocks: blocks
                       } as any;
 
-          const slackClient = createSlackClient(accessToken);
-          await slackClient.views.update({
-            view_id: view.id,
-            view: splitModal
-          });
-
-          // Don't send response if headers already sent
+          // Return updated view via response_action (the correct pattern for view_submission)
           if (!res.headersSent) {
             return res.status(200).json({ response_action: 'update', view: splitModal });
           }
@@ -641,7 +635,7 @@ router.post('/interactive',
           console.log('[DEBUG] Transaction amount:', transactionAmount);
 
           // Get message info from metadata (stored when Split button was clicked)
-          let messageInfo: { channel: string; ts: string; blocks?: any[]; text?: string } | null = null;
+          let messageInfo: { channel: string; ts: string } | null = null;
           try {
             const metadata = view.private_metadata ? JSON.parse(view.private_metadata) : {};
             messageInfo = metadata.messageInfo || null;
@@ -695,38 +689,69 @@ router.post('/interactive',
               
               if (accessToken && messageInfo && messageInfo.channel && messageInfo.ts) {
                 const slackClient = createSlackClient(accessToken);
-                
-                // Use stored blocks from when Split button was clicked
-                // Remove action blocks (buttons) from the message
-                const updatedBlocks = (messageInfo.blocks || [])
-                  .filter((block: any) => block.type !== 'actions');
-                
+
+                // Fetch transaction details to reconstruct the message
+                // (we don't store blocks in private_metadata to avoid Slack's 3000-char limit)
+                const [txnDetails] = await db
+                  .select({
+                    merchantName: plaidTransactions.merchantName,
+                    name: plaidTransactions.name,
+                    amount: plaidTransactions.amount,
+                  })
+                  .from(plaidTransactions)
+                  .where(eq(plaidTransactions.id, transactionId))
+                  .limit(1);
+
+                const merchant = txnDetails?.merchantName || txnDetails?.name || 'Unknown';
+                const rawAmount = parseFloat(txnDetails?.amount || '0');
+                const isIncoming = rawAmount < 0;
+                const displayAmount = rawAmount > 0 ? rawAmount : Math.abs(rawAmount);
+                const amountDisplay = isIncoming ? `+$${displayAmount.toFixed(2)}` : `$${displayAmount.toFixed(2)}`;
+
                 // Build split details text
-                const splitDetails = splitsWithNames.map((split, index) => {
+                const splitDetails = splitsWithNames.map((split) => {
                   return `• ${split.categoryName}: $${parseFloat(split.amount).toFixed(2)}`;
                 }).join('\n');
-                
-                // Add confirmation message as a new section block with split details
-                updatedBlocks.push({
-                  type: 'section' as const,
-                  text: {
-                    type: 'mrkdwn' as const,
-                    text: `✓ *Transaction split into ${splits.length} categories:*\n${splitDetails}`
+
+                // Build updated blocks from scratch (no stored blocks needed)
+                const updatedBlocks: any[] = [
+                  {
+                    type: 'section',
+                    text: {
+                      type: 'mrkdwn',
+                      text: `${merchant}\n${amountDisplay}`
+                    }
+                  },
+                  {
+                    type: 'context',
+                    elements: [
+                      {
+                        type: 'mrkdwn',
+                        text: `Transaction ID: ${transactionId}`
+                      }
+                    ]
+                  },
+                  {
+                    type: 'section',
+                    text: {
+                      type: 'mrkdwn',
+                      text: `✓ *Transaction split into ${splits.length} categories:*\n${splitDetails}`
+                    }
                   }
-                } as any);
-                
-                // Update fallback text for push notifications
+                ];
+
+                // Build fallback text for push notifications
                 const splitSummary = splitsWithNames.map(s => {
                   return `${s.categoryName} ($${parseFloat(s.amount).toFixed(2)})`;
                 }).join(', ');
-                const updatedText = `${messageInfo.text || 'Transaction'}\n✓ Transaction split: ${splitSummary}`;
-                
+                const updatedText = `${merchant} • ${amountDisplay}\n✓ Transaction split: ${splitSummary}`;
+
                 console.log('[DEBUG] Updating Slack message with:', {
                   channel: messageInfo.channel,
                   ts: messageInfo.ts,
                   text: updatedText
                 });
-                
+
                 try {
                   await slackClient.chat.update({
                     channel: messageInfo.channel,
@@ -745,13 +770,6 @@ router.post('/interactive',
                 }
               } else {
                 console.log('[DEBUG] Skipping Slack message update - missing accessToken or messageInfo');
-                if (messageInfo) {
-                  console.log('[DEBUG] Message info details:', {
-                    hasChannel: !!messageInfo.channel,
-                    hasTs: !!messageInfo.ts,
-                    hasBlocks: !!(messageInfo.blocks && messageInfo.blocks.length > 0)
-                  });
-                }
               }
             } catch (error: any) {
               console.error('[DEBUG] Error updating transaction splits:', error);
@@ -1018,12 +1036,11 @@ router.post('/interactive',
                     continue;
                   }
 
-                  // Store message info and blocks in private_metadata so we can update it later
+                  // Store message location in private_metadata so we can update it later
+                  // Only store channel + ts (not blocks) to stay under Slack's 3000-char private_metadata limit
                   const messageInfo = payload.message ? {
                     channel: payload.channel?.id || payload.message.channel,
-                    ts: payload.message.ts,
-                    blocks: payload.message.blocks || [], // Store original blocks
-                    text: payload.message.text || '' // Store original text
+                    ts: payload.message.ts
                   } : null;
 
                   // Open first modal asking for number of splits
