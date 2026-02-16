@@ -40,7 +40,34 @@ No progress bar is shown. The stats line is sufficient context for budget tracki
 - **Stats are always fresh**: `getCategorySpendingStats()` recalculates from the DB at query time, so the updated message reflects the reassignment.
 - **Fallback text**: Updated to a concise format for push notification previews.
 
+## Split Transaction Messages
+
+When a transaction is split into multiple categories via the Slack modal, the confirmation message now includes budget stats for each split category at the top, followed by the split breakdown.
+
+### Message Format
+
+```
+Merchant Name
+$XX.XX
+
+*Category A* — $XX.XX / $YY.YY (Z.Z%)
+*Category B* — $XX.XX / $YY.YY (Z.Z%)
+*Category C*
+
+Transaction ID: 123
+
+✓ Transaction split into 3 categories:
+• Category A: $XX.XX
+• Category B: $XX.XX
+• Category C: $XX.XX
+```
+
+- Categories with `allotted > 0` show the stats line (spent / allotted with percentage)
+- Categories with no allotted amount show just the bolded name
+- Stats are fetched via `getCategorySpendingStats()` for each split category using the user's active budget
+- The category ID for each split is looked up by index from the original `splits` array (parallel to `splitsWithNames`)
+
 ## Files
 
 - `backend/src/services/slack-notifications.ts` — `getCategorySpendingStats()`, `sendTransactionNotification()` (builds initial message)
-- `backend/src/routes/slack.ts` — category button handler (rebuilds message on reassignment)
+- `backend/src/routes/slack.ts` — category button handler (rebuilds message on reassignment), split modal submission handler (builds split confirmation with stats)

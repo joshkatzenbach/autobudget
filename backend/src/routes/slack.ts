@@ -687,7 +687,7 @@ router.post('/interactive',
               const accessToken = await getUserAccessToken(transaction.userId);
               console.log('[DEBUG] Access token retrieved:', accessToken ? 'yes' : 'no');
               console.log('[DEBUG] Message info exists:', messageInfo ? 'yes' : 'no');
-              
+
               if (accessToken && messageInfo && messageInfo.channel && messageInfo.ts) {
                 const slackClient = createSlackClient(accessToken);
 
@@ -709,6 +709,36 @@ router.post('/interactive',
                 const displayAmount = rawAmount > 0 ? rawAmount : Math.abs(rawAmount);
                 const amountDisplay = isIncoming ? `+$${displayAmount.toFixed(2)}` : `$${displayAmount.toFixed(2)}`;
 
+                // Build category stats lines for each split category
+                const [activeBudget] = await db
+                  .select()
+                  .from(budgets)
+                  .where(and(
+                    eq(budgets.userId, transaction.userId),
+                    eq(budgets.isActive, true)
+                  ))
+                  .limit(1);
+
+                const categoryStatsLines: string[] = [];
+                if (activeBudget) {
+                  for (const split of splitsWithNames) {
+                    const splitIndex = splitsWithNames.indexOf(split);
+                    const catId = splits[splitIndex]?.categoryId;
+                    if (catId) {
+                      const stats = await getCategorySpendingStats(transaction.userId, activeBudget.id, catId);
+                      if (stats.allotted > 0) {
+                        categoryStatsLines.push(`*${split.categoryName}* — $${stats.spent.toFixed(2)} / $${stats.allotted.toFixed(2)} (${stats.percentage.toFixed(1)}%)`);
+                      } else {
+                        categoryStatsLines.push(`*${split.categoryName}*`);
+                      }
+                    }
+                  }
+                }
+
+                const headerText = categoryStatsLines.length > 0
+                  ? `${merchant}\n${amountDisplay}\n\n${categoryStatsLines.join('\n')}`
+                  : `${merchant}\n${amountDisplay}`;
+
                 // Build split details text
                 const splitDetails = splitsWithNames.map((split) => {
                   return `• ${split.categoryName}: $${parseFloat(split.amount).toFixed(2)}`;
@@ -720,7 +750,7 @@ router.post('/interactive',
                     type: 'section',
                     text: {
                       type: 'mrkdwn',
-                      text: `${merchant}\n${amountDisplay}`
+                      text: headerText
                     }
                   },
                   {
