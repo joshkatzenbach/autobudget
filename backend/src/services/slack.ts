@@ -257,8 +257,8 @@ export async function listUsers(accessToken: string): Promise<Array<{ id: string
  * Create or open a group DM (multi-person instant message)
  * Uses conversations.open API endpoint
  * @param accessToken - Slack access token
- * @param userIds - Array of user IDs to include in the group DM (2-8 users, plus the bot)
- * @returns The conversation ID (channel ID) for the group DM
+ * @param userIds - Array of user IDs to include in the DM (1 user = 1:1 DM, 2-8 users = group DM)
+ * @returns The conversation ID (channel ID) for the DM
  */
 export async function createGroupDM(
   accessToken: string,
@@ -267,10 +267,8 @@ export async function createGroupDM(
   const client = createSlackClient(accessToken);
 
   try {
-    // conversations.open requires at least 2 users (plus the bot makes 3 total)
-    // Maximum is 8 users (plus the bot makes 9 total)
-    if (userIds.length < 2) {
-      throw new Error('Group DM requires at least 2 users');
+    if (userIds.length < 1) {
+      throw new Error('At least 1 user is required');
     }
     if (userIds.length > 8) {
       throw new Error('Group DM can have at most 8 users');

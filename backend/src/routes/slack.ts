@@ -1319,9 +1319,19 @@ router.get('/users', async (req: AuthRequest, res: Response) => {
     // List users via Slack API
     const users = await listUsers(accessToken);
 
+    // Filter out the bot's own user and Slackbot (USLACKBOT) to prevent
+    // "contains_invalid_user" errors from conversations.open
+    const oauth = await getUserOAuth(req.userId);
+    const botUserId = oauth?.botUserId;
+    const filteredUsers = users.filter((user: any) => {
+      if (user.id === 'USLACKBOT') return false;
+      if (botUserId && user.id === botUserId) return false;
+      return true;
+    });
+
     res.json({
       success: true,
-      users: users,
+      users: filteredUsers,
     });
   } catch (error: any) {
     console.error('Error listing Slack users:', error);
