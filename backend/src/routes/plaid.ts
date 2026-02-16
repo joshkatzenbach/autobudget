@@ -94,6 +94,42 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
           const amountToStore = tx.amount.toString();
 
           if (isNew) {
+            // Check if this posted transaction replaces a pending one
+            if (tx.pending_transaction_id) {
+              const [pendingRow] = await db
+                .select()
+                .from(plaidTransactions)
+                .where(eq(plaidTransactions.transactionId, tx.pending_transaction_id))
+                .limit(1);
+
+              if (pendingRow) {
+                // Update the existing pending row in-place, preserving notificationSent, isReviewed, etc.
+                await db
+                  .update(plaidTransactions)
+                  .set({
+                    transactionId: tx.transaction_id,
+                    amount: amountToStore,
+                    merchantName: tx.merchant_name || null,
+                    name: tx.name,
+                    date: tx.date,
+                    plaidCategory,
+                    plaidCategoryId,
+                    isPending: false,
+                    updatedAt: new Date(),
+                  })
+                  .where(eq(plaidTransactions.id, pendingRow.id));
+
+                console.log(`[SYNC] Pending-to-posted: updated txn ${tx.pending_transaction_id} → ${tx.transaction_id} (notificationSent=${pendingRow.notificationSent})`);
+
+                // If the pending row was never notified, categorize and notify now
+                if (!pendingRow.notificationSent) {
+                  await categorizeAndNotify({ ...pendingRow, id: pendingRow.id }, tx);
+                }
+
+                return; // Skip normal new-transaction flow
+              }
+            }
+
             // Store new transaction (storeTransaction handles duplicates atomically)
             const storedTx = await storeTransaction(
               plaidItem.userId,
