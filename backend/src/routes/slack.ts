@@ -7,10 +7,11 @@ import { exchangeCodeForToken, storeOAuthTokens, getUserAccessToken, getUserOAut
 import { storeMessage, processIncomingMessage, updateMessageStatus } from '../services/slack-messages';
 import { assignTransactionCategory, updateTransactionCategories } from '../services/transactions';
 import { getBudgetCategories } from '../services/budgets';
-import { budgetCategories } from '../db/schema';
+import { budgetCategories, budgets } from '../db/schema';
 import { db } from '../db';
 import { slackMessages, plaidTransactions, slackOAuth } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
+import { getCategorySpendingStats } from '../services/slack-notifications';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -972,29 +973,78 @@ router.post('/interactive',
                     true // Manual override
                   );
 
-                  // Update the Slack message to show it was updated and remove buttons
+                  // Update the Slack message with new category stats and remove buttons
                   const accessToken = await getUserAccessToken(transaction.userId);
-                  
+
                   if (accessToken && payload.message) {
                     const slackClient = createSlackClient(accessToken);
-                    
-                    // Remove action blocks (buttons) from the message
-                    const updatedBlocks = payload.message.blocks
-                      ? payload.message.blocks.filter((block: any) => block.type !== 'actions')
-                      : [];
-                    
-                    // Add confirmation message as a new section block
+                    const newCategoryName = action.text.text;
+
+                    // Get the user's active budget and new category stats
+                    const [activeBudget] = await db
+                      .select()
+                      .from(budgets)
+                      .where(and(
+                        eq(budgets.userId, transaction.userId),
+                        eq(budgets.isActive, true)
+                      ))
+                      .limit(1);
+
+                    // Parse merchant and amount from existing first section block
+                    // Format is: "*CategoryName*\nMerchant\nAmount\n[stats]"
+                    const existingText = payload.message.blocks?.[0]?.text?.text || '';
+                    const existingLines = existingText.split('\n');
+                    // Line 0 = category name (bold), Line 1 = merchant, Line 2 = amount
+                    const merchant = existingLines[1] || '';
+                    const amount = existingLines[2] || '';
+
+                    // Build new message lines with updated category
+                    const newMessageLines: string[] = [
+                      `*${newCategoryName}*`,
+                      merchant,
+                      amount
+                    ];
+
+                    // Add new category spending stats if we have a budget
+                    if (activeBudget) {
+                      const stats = await getCategorySpendingStats(transaction.userId, activeBudget.id, categoryId);
+                      if (stats.allotted > 0) {
+                        newMessageLines.push(`$${stats.spent.toFixed(2)} / $${stats.allotted.toFixed(2)} (${stats.percentage.toFixed(1)}%)`);
+                      }
+                    }
+
+                    // Keep non-action, non-section blocks (like context), rebuild first section
+                    const updatedBlocks: any[] = [
+                      {
+                        type: 'section',
+                        text: {
+                          type: 'mrkdwn',
+                          text: newMessageLines.join('\n')
+                        }
+                      }
+                    ];
+
+                    // Preserve context blocks (e.g., transaction ID)
+                    if (payload.message.blocks) {
+                      for (const block of payload.message.blocks) {
+                        if (block.type === 'context') {
+                          updatedBlocks.push(block);
+                        }
+                      }
+                    }
+
+                    // Add confirmation message
                     updatedBlocks.push({
                       type: 'section',
                       text: {
                         type: 'mrkdwn',
-                        text: `✓ *Category updated to:* ${action.text.text}`
+                        text: `✓ *Category updated to:* ${newCategoryName}`
                       }
                     });
-                    
+
                     // Update fallback text for push notifications
-                    const updatedText = `${payload.message.text}\n✓ Category updated to: ${action.text.text}`;
-                    
+                    const updatedText = `${newCategoryName} • ${amount} • ✓ Category updated`;
+
                     await slackClient.chat.update({
                       channel: payload.channel?.id || payload.message.channel,
                       ts: payload.message.ts,

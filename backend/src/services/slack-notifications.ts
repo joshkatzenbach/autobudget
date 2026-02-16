@@ -223,7 +223,7 @@ export async function sendTransactionNotification(
 
     // Build formatted message blocks - simple list format
     const messageLines: string[] = [
-      categoryName,
+      `*${categoryName}*`,
       merchant,
       amountDisplay
     ];
@@ -231,20 +231,6 @@ export async function sendTransactionNotification(
     // Add budget status if category is assigned
     if (categoryId && allotted > 0) {
       messageLines.push(`$${spent.toFixed(2)} / $${allotted.toFixed(2)} (${percentage.toFixed(1)}%)`);
-      
-      // Show progress bar if 100% or less, red X if over 100%
-      if (percentage <= 100) {
-        // Add ASCII progress bar (20 characters wide to fit phone screens)
-        const barWidth = 20;
-        const filled = Math.round((percentage / 100) * barWidth);
-        const empty = barWidth - filled;
-        const filledBar = '█'.repeat(filled);
-        const emptyBar = '░'.repeat(empty);
-        messageLines.push(`[${filledBar}${emptyBar}] ${percentage.toFixed(0)}%`);
-      } else {
-        // Show red X emoji if over budget
-        messageLines.push('❌ Over budget');
-      }
     }
 
     const blocks: any[] = [
