@@ -94,7 +94,7 @@ router.get('/oauth/callback', async (req: Request, res: Response) => {
 
     // Redirect to frontend success page
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
-    res.redirect(`${frontendUrl}/messaging?connected=true`);
+    res.redirect(`${frontendUrl}/settings/slack?connected=true`);
   } catch (error: any) {
     console.error('Error handling OAuth callback:', error);
     res.status(500).json({ error: error.message || 'Failed to complete OAuth flow' });

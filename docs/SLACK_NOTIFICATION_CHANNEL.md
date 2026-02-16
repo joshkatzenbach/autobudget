@@ -19,3 +19,9 @@ The GET `/api/slack/users` endpoint (`backend/src/routes/slack.ts`) filters out 
 | Bot's own user ID | The bot is implicitly included by `conversations.open`; passing it explicitly causes errors. Looked up via `getUserOAuth().botUserId`. |
 
 The frontend already filters `is_bot` and `is_deleted` users, so the backend filtering is a second layer for edge cases the frontend can't catch.
+
+## OAuth Redirect
+
+After a successful Slack OAuth flow, the backend callback (`GET /api/slack/oauth/callback` in `backend/src/routes/slack.ts`) redirects to `/settings/slack?connected=true`. The Slack integration settings page at that route can check the `connected` query param to show a success message.
+
+Previously this redirected to a now-deleted `/messaging` development page. The production settings page is `/settings/slack` (component: `SlackIntegrationComponent`).
