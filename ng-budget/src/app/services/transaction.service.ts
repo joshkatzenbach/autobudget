@@ -2,8 +2,7 @@ import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
 import {
-  TransactionWithCategories,
-  MonthlyCategorySummary
+  TransactionWithCategories
 } from '../models/budget.model';
 
 @Injectable({
@@ -37,24 +36,6 @@ export class TransactionService {
 
   removeTransactionCategory(transactionId: number, categoryId: number): Observable<void> {
     return this.api.delete<void>(`/transactions/${transactionId}/categories/${categoryId}`);
-  }
-
-  generateMonthlySummary(year: number, month: number, budgetId?: number): Observable<any> {
-    return this.api.post('/transactions/summaries/generate', {
-      year,
-      month,
-      budgetId
-    });
-  }
-
-  getMonthlySummaries(year?: number, month?: number, budgetId?: number): Observable<MonthlyCategorySummary[]> {
-    const params: any = {};
-    if (year) params.year = year;
-    if (month) params.month = month;
-    if (budgetId) params.budgetId = budgetId;
-
-    const queryString = new URLSearchParams(params).toString();
-    return this.api.get<MonthlyCategorySummary[]>(`/transactions/summaries${queryString ? '?' + queryString : ''}`);
   }
 
   syncTransactions(startDate?: string): Observable<{ success: boolean; message: string; fetched: number; categorized: number }> {

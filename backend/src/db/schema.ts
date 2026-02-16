@@ -42,7 +42,6 @@ export const budgetCategories = pgTable('budget_categories', {
   name: varchar('name', { length: 255 }).notNull(),
   allocatedAmount: decimal('allocated_amount', { precision: 10, scale: 2 }).notNull(), // Amount to spend/allocate per month (same for all category types)
   categoryType: varchar('category_type', { length: 50 }).notNull().default('variable'), // 'fixed', 'savings', 'variable', 'surplus', 'excluded'
-  rolloverBalance: decimal('rollover_balance', { precision: 10, scale: 2 }).default('0').notNull(), // For Savings/Surplus/Fixed - tracks rollover balance
   color: varchar('color', { length: 7 }), // Hex color code for category (e.g., #FF5733)
   // Variable category fields
   autoSurplusDestination: varchar('auto_surplus_destination', { length: 20 }), // Where surplus goes automatically
@@ -112,22 +111,6 @@ export const transactionCategories = pgTable('transaction_categories', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-export const monthlyCategorySummaries = pgTable('monthly_category_summaries', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  budgetId: integer('budget_id').references(() => budgets.id, { onDelete: 'cascade' }), // Optional, for budget-specific summaries
-  categoryId: integer('category_id').notNull().references(() => budgetCategories.id, { onDelete: 'cascade' }),
-  year: integer('year').notNull(), // e.g., 2024
-  month: integer('month').notNull(), // 1-12
-  totalSpent: decimal('total_spent', { precision: 10, scale: 2 }).notNull(), // Sum of all transaction amounts for this category in this month
-  transactionCount: integer('transaction_count').default(0).notNull(), // Number of transactions in this category for this month
-  accumulatedTotal: decimal('accumulated_total', { precision: 10, scale: 2 }), // For Fixed categories - tracks savings at month end
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-}, (table) => ({
-  uniqueUserBudgetCategoryMonth: unique().on(table.userId, table.budgetId, table.categoryId, table.year, table.month),
-}));
-
 export const slackOAuth = pgTable('slack_oauth', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
@@ -157,19 +140,6 @@ export const fundMovements = pgTable('fund_movements', {
   year: integer('year').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
-
-export const savingsSnapshots = pgTable('savings_snapshots', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  budgetId: integer('budget_id').notNull().references(() => budgets.id, { onDelete: 'cascade' }),
-  categoryId: integer('category_id').notNull().references(() => budgetCategories.id, { onDelete: 'cascade' }),
-  year: integer('year').notNull(),
-  month: integer('month').notNull(), // 1-12
-  accumulatedTotal: decimal('accumulated_total', { precision: 10, scale: 2 }).notNull(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-}, (table) => ({
-  uniqueUserBudgetCategoryMonth: unique().on(table.userId, table.budgetId, table.categoryId, table.year, table.month),
-}));
 
 export const plaidWebhooks = pgTable('plaid_webhooks', {
   id: serial('id').primaryKey(),
@@ -208,12 +178,13 @@ export const monthEndState = pgTable('month_end_state', {
   year: integer('year').notNull(),
   month: integer('month').notNull(),
   status: varchar('status', { length: 20 }).default('pending').notNull(),
-  currentStep: varchar('current_step', { length: 30 }),
+  phase: varchar('phase', { length: 30 }), // variable_deficits, fixed_deficits, variable_surpluses, summary, completed
   pendingCategoryId: integer('pending_category_id').references(() => budgetCategories.id, { onDelete: 'set null' }),
   slackMessageTs: varchar('slack_message_ts', { length: 50 }),
   slackChannelId: varchar('slack_channel_id', { length: 50 }),
   processedCategories: text('processed_categories'),
-  pendingTransfers: text('pending_transfers'),
+  remainingAmount: decimal('remaining_amount', { precision: 10, scale: 2 }).default('0'),
+  currentButtonSet: integer('current_button_set').default(1),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({

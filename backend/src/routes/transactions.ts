@@ -5,8 +5,6 @@ import {
   assignTransactionCategory,
   splitTransaction,
   removeTransactionCategory,
-  generateMonthlySummary,
-  getMonthlySummaries,
 } from '../services/transactions';
 import { budgets, plaidItems, plaidTransactions, plaidAccounts, transactionCategories } from '../db/schema';
 import { db } from '../db';
@@ -119,51 +117,6 @@ router.delete('/:transactionId/categories/:categoryId', async (req: AuthRequest,
   } catch (error: any) {
     console.error('Error removing category:', error);
     res.status(500).json({ error: 'Failed to remove category' });
-  }
-});
-
-// Generate monthly summaries
-router.post('/summaries/generate', async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { year, month, budgetId } = req.body;
-    if (!year || !month) {
-      return res.status(400).json({ error: 'year and month are required' });
-    }
-
-    const summaries = await generateMonthlySummary(
-      req.userId,
-      year,
-      month,
-      budgetId
-    );
-
-    res.json({ success: true, summaries });
-  } catch (error: any) {
-    console.error('Error generating summaries:', error);
-    res.status(500).json({ error: 'Failed to generate summaries' });
-  }
-});
-
-// Get monthly summaries
-router.get('/summaries', async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const year = req.query.year ? parseInt(req.query.year as string) : undefined;
-    const month = req.query.month ? parseInt(req.query.month as string) : undefined;
-    const budgetId = req.query.budgetId ? parseInt(req.query.budgetId as string) : undefined;
-
-    const summaries = await getMonthlySummaries(req.userId, year, month, budgetId);
-    res.json(summaries);
-  } catch (error: any) {
-    console.error('Error getting summaries:', error);
-    res.status(500).json({ error: 'Failed to get summaries' });
   }
 });
 

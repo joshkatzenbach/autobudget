@@ -1,7 +1,7 @@
 import { Component, Input, OnInit, OnChanges, SimpleChanges, AfterViewInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Chart, ChartConfiguration, ChartData, registerables } from 'chart.js';
-import { Budget, BudgetCategory, SavingsSnapshot } from '../../../models/budget.model';
+import { Budget, BudgetCategory, MonthlySnapshot } from '../../../models/budget.model';
 import { BudgetService } from '../../../services/budget.service';
 
 Chart.register(...registerables);
@@ -16,28 +16,28 @@ Chart.register(...registerables);
 export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDestroy {
   @Input() budget: Budget | null = null;
   @Input() categories: BudgetCategory[] = [];
-  
+
   @ViewChild('variableSpendingChart', { static: false }) chartCanvas!: ElementRef<HTMLCanvasElement>;
   @ViewChild('savingsChart', { static: false }) savingsChartCanvas!: ElementRef<HTMLCanvasElement>;
   @ViewChild('savingsLineChart', { static: false }) savingsLineChartCanvas!: ElementRef<HTMLCanvasElement>;
-  
+
   variableChart: Chart | null = null;
   savingsChart: Chart | null = null;
   savingsLineChart: Chart | null = null;
   selectedSavingsCategory: BudgetCategory | null = null;
-  savingsSnapshots: SavingsSnapshot[] = [];
+  monthlySnapshots: MonthlySnapshot[] = [];
 
   constructor(private budgetService: BudgetService) {}
 
   async ngOnInit() {
-    await this.loadSavingsSnapshots();
+    await this.loadSnapshots();
   }
 
-  async loadSavingsSnapshots() {
+  async loadSnapshots() {
     try {
-      this.savingsSnapshots = await this.budgetService.getSavingsSnapshots().toPromise() || [];
+      this.monthlySnapshots = await this.budgetService.getMonthlySnapshots().toPromise() || [];
     } catch (error) {
-      console.error('Error loading savings snapshots:', error);
+      console.error('Error loading monthly snapshots:', error);
     }
   }
 
@@ -56,7 +56,7 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
 
   async ngAfterViewInit() {
     // Wait a tick to ensure view is fully initialized
-    await this.loadSavingsSnapshots();
+    await this.loadSnapshots();
     setTimeout(() => {
       this.updateVariableSpendingChart();
       this.updateSavingsChart();
@@ -188,8 +188,8 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
   async onSavingsCategoryClick(category: BudgetCategory) {
     this.selectedSavingsCategory = category;
     try {
-      const snapshots = await this.budgetService.getSavingsSnapshots(category.id).toPromise() || [];
-      this.savingsSnapshots = snapshots;
+      const snapshots = await this.budgetService.getMonthlySnapshots(category.id).toPromise() || [];
+      this.monthlySnapshots = snapshots;
       setTimeout(() => {
         this.updateSavingsLineChart();
       }, 0);
@@ -199,18 +199,18 @@ export class BudgetAnalytics implements OnInit, OnChanges, AfterViewInit, OnDest
   }
 
   private updateSavingsLineChart() {
-    if (!this.savingsLineChartCanvas || !this.selectedSavingsCategory || this.savingsSnapshots.length === 0) {
+    if (!this.savingsLineChartCanvas || !this.selectedSavingsCategory || this.monthlySnapshots.length === 0) {
       return;
     }
 
     // Sort snapshots by year and month
-    const sorted = [...this.savingsSnapshots].sort((a, b) => {
+    const sorted = [...this.monthlySnapshots].sort((a, b) => {
       if (a.year !== b.year) return a.year - b.year;
       return a.month - b.month;
     });
 
     const labels = sorted.map(s => `${new Date(s.year, s.month - 1).toLocaleString('default', { month: 'short', year: 'numeric' })}`);
-    const data = sorted.map(s => parseFloat(s.rolloverBalance));
+    const data = sorted.map(s => parseFloat(s.finalRolloverBalance));
 
     const chartData: ChartData<'line'> = {
       labels,

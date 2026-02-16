@@ -7,6 +7,7 @@ import budgetRoutes from './routes/budgets';
 import plaidRoutes from './routes/plaid';
 import transactionRoutes from './routes/transactions';
 import slackRoutes from './routes/slack';
+import cronRoutes from './routes/cron';
 
 dotenv.config();
 
@@ -96,6 +97,7 @@ app.use('/api/budgets', budgetRoutes);
 app.use('/api/plaid', plaidRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/slack', slackRoutes);
+app.use('/api/cron', cronRoutes);
 
 // Frontend is served separately on Firebase, so we only serve API routes
 

@@ -15,7 +15,6 @@ interface CategoryForm {
   allocatedAmount: string;
   allocatedAmountPeriod: 'monthly' | 'annual'; // Whether allocatedAmount is monthly or annual
   categoryType: CategoryType;
-  rolloverBalance: string;
   color: string | null;
   // Variable category fields
   autoSurplusDestination?: string | null;
@@ -140,7 +139,6 @@ export class BudgetFormComponent implements OnInit {
             allocatedAmount: cat.allocatedAmount,
             allocatedAmountPeriod: 'monthly' as 'monthly' | 'annual', // Default to monthly, could be enhanced to detect
             categoryType: cat.categoryType,
-            rolloverBalance: cat.rolloverBalance || '0',
             color: cat.color || this.getNextAvailableColor(),
             // Variable category fields
             autoSurplusDestination: cat.autoSurplusDestination || null,
@@ -267,7 +265,6 @@ export class BudgetFormComponent implements OnInit {
         allocatedAmount: cat.allocatedAmount,
         spentAmount: '0',
         categoryType: 'savings' as CategoryType,
-        rolloverBalance: cat.rolloverBalance,
         color: cat.color,
         createdAt: '',
         updatedAt: '',
@@ -408,7 +405,6 @@ export class BudgetFormComponent implements OnInit {
         allocatedAmount: '',
         allocatedAmountPeriod: 'monthly',
         categoryType: 'variable',
-        rolloverBalance: '0',
         color: this.getNextAvailableColor(),
         autoSurplusDestination: null,
         expectedMerchantName: null,
@@ -432,7 +428,6 @@ export class BudgetFormComponent implements OnInit {
           allocatedAmount: remaining.toFixed(2),
           allocatedAmountPeriod: 'monthly',
           categoryType: 'surplus',
-          rolloverBalance: '0',
           color: '#28a745'
         }
       ]);
@@ -665,7 +660,6 @@ export class BudgetFormComponent implements OnInit {
               name: cat.name,
               allocatedAmount: cat.allocatedAmount,
               categoryType: cat.categoryType,
-              rolloverBalance: cat.rolloverBalance,
               color: cat.color || null
             };
 
@@ -714,7 +708,6 @@ export class BudgetFormComponent implements OnInit {
         const categoryData: UpdateBudgetCategoryRequest = {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
-          rolloverBalance: cat.rolloverBalance || '0',
           color: cat.color || null,
           autoSurplusDestination: cat.autoSurplusDestination ?? null,
           expectedMerchantName: cat.expectedMerchantName ?? null,
@@ -731,7 +724,6 @@ export class BudgetFormComponent implements OnInit {
           name: cat.name,
           allocatedAmount: cat.allocatedAmount,
           categoryType: cat.categoryType,
-          rolloverBalance: cat.rolloverBalance || '0',
           color: cat.color || null,
           autoSurplusDestination: cat.autoSurplusDestination ?? null,
           expectedMerchantName: cat.expectedMerchantName ?? null,

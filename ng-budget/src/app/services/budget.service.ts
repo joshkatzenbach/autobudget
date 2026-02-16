@@ -55,19 +55,15 @@ export class BudgetService {
     return this.api.delete<void>(`/budgets/categories/${categoryId}`);
   }
 
-  getSavingsSnapshots(categoryId?: number): Observable<any[]> {
+  getMonthlySnapshots(categoryId?: number): Observable<any[]> {
     const params: any = {};
     if (categoryId) params.categoryId = categoryId;
     const queryString = new URLSearchParams(params).toString();
-    return this.api.get<any[]>(`/budgets/savings-snapshots${queryString ? '?' + queryString : ''}`);
+    return this.api.get<any[]>(`/budgets/monthly-snapshots${queryString ? '?' + queryString : ''}`);
   }
 
   getFundMovements(): Observable<any[]> {
     return this.api.get<any[]>('/budgets/fund-movements');
-  }
-
-  processMonthEnd(year: number, month: number): Observable<any> {
-    return this.api.post('/budgets/process-month-end', { year, month });
   }
 
 }

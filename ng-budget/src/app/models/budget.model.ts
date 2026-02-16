@@ -66,7 +66,6 @@ export interface CreateBudgetCategoryRequest {
   name: string;
   allocatedAmount: string;
   categoryType?: CategoryType;
-  rolloverBalance?: string;
   color?: string | null;
   // Variable category fields
   autoSurplusDestination?: string | null;
@@ -83,7 +82,6 @@ export interface UpdateBudgetCategoryRequest {
   name?: string;
   allocatedAmount?: string;
   categoryType?: CategoryType;
-  rolloverBalance?: string;
   color?: string | null;
   // Variable category fields
   autoSurplusDestination?: string | null;
@@ -128,20 +126,6 @@ export interface TransactionWithCategories extends Transaction {
   categories: TransactionCategory[];
 }
 
-export interface MonthlyCategorySummary {
-  id: number;
-  userId: number;
-  budgetId: number | null;
-  categoryId: number;
-  year: number;
-  month: number;
-  totalSpent: string;
-  transactionCount: number;
-  rolloverBalance?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface FundMovement {
   id: number;
   userId: number;
@@ -159,14 +143,20 @@ export interface FundMovement {
   createdAt: string;
 }
 
-export interface SavingsSnapshot {
+export interface MonthlySnapshot {
   id: number;
   userId: number;
   budgetId: number;
   categoryId: number;
   year: number;
   month: number;
-  rolloverBalance: string;
+  allotment: string;
+  spent: string;
+  surplusGiven: string;
+  deficitReceived: string;
+  finalRolloverBalance: string;
+  isLocked: boolean;
   createdAt: string;
+  updatedAt: string;
 }
 

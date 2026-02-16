@@ -109,7 +109,6 @@ router.post('/categories', async (req: AuthRequest, res: Response) => {
       name,
       allocatedAmount,
       categoryType,
-      rolloverBalance,
       color,
       // Variable category fields
       autoSurplusDestination,
@@ -131,7 +130,6 @@ router.post('/categories', async (req: AuthRequest, res: Response) => {
       name,
       allocatedAmount,
       categoryType,
-      rolloverBalance,
       color,
       autoSurplusDestination,
       expectedMerchantName,
@@ -198,7 +196,6 @@ router.put('/categories/:categoryId', async (req: AuthRequest, res: Response) =>
       name,
       allocatedAmount,
       categoryType,
-      rolloverBalance,
       color,
       // Variable category fields
       autoSurplusDestination,
@@ -215,7 +212,6 @@ router.put('/categories/:categoryId', async (req: AuthRequest, res: Response) =>
       name,
       allocatedAmount,
       categoryType,
-      rolloverBalance,
       color,
       autoSurplusDestination,
       expectedMerchantName,
@@ -264,40 +260,10 @@ router.delete('/categories/:categoryId', async (req: AuthRequest, res: Response)
   }
 });
 
-// End-of-month processing endpoint
-router.post('/process-month-end', async (req: AuthRequest, res: Response) => {
+// Get monthly snapshots (replaces savings-snapshots and provides data for analytics)
+router.get('/monthly-snapshots', async (req: AuthRequest, res: Response) => {
   try {
-    const { year, month } = req.body;
-
-    if (!year || !month) {
-      return res.status(400).json({ error: 'Year and month are required' });
-    }
-
-    if (month < 1 || month > 12) {
-      return res.status(400).json({ error: 'Month must be between 1 and 12' });
-    }
-
-    const { processMonthEnd } = await import('../services/month-end');
-    const result = await processMonthEnd({
-      userId: req.userId!,
-      year: parseInt(year),
-      month: parseInt(month),
-    });
-
-    res.json({
-      success: true,
-      ...result,
-    });
-  } catch (error: any) {
-    console.error('Process month end error:', error);
-    res.status(500).json({ error: error.message || 'Failed to process month end' });
-  }
-});
-
-// Get savings snapshots
-router.get('/savings-snapshots', async (req: AuthRequest, res: Response) => {
-  try {
-    const { savingsSnapshots } = await import('../db/schema');
+    const { monthlySnapshots } = await import('../db/schema');
     const { eq, and, desc } = await import('drizzle-orm');
     const { db } = await import('../db');
 
@@ -309,24 +275,24 @@ router.get('/savings-snapshots', async (req: AuthRequest, res: Response) => {
     const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : undefined;
 
     let conditions = [
-      eq(savingsSnapshots.userId, req.userId!),
-      eq(savingsSnapshots.budgetId, budgetId)
+      eq(monthlySnapshots.userId, req.userId!),
+      eq(monthlySnapshots.budgetId, budgetId)
     ];
 
     if (categoryId) {
-      conditions.push(eq(savingsSnapshots.categoryId, categoryId));
+      conditions.push(eq(monthlySnapshots.categoryId, categoryId));
     }
 
     const snapshots = await db
       .select()
-      .from(savingsSnapshots)
+      .from(monthlySnapshots)
       .where(and(...conditions))
-      .orderBy(desc(savingsSnapshots.year), desc(savingsSnapshots.month));
+      .orderBy(desc(monthlySnapshots.year), desc(monthlySnapshots.month));
 
     res.json(snapshots);
   } catch (error: any) {
-    console.error('Get savings snapshots error:', error);
-    res.status(500).json({ error: 'Failed to get savings snapshots' });
+    console.error('Get monthly snapshots error:', error);
+    res.status(500).json({ error: 'Failed to get monthly snapshots' });
   }
 });
 

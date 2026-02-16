@@ -1,33 +1,40 @@
 import { db } from '../db';
-import { 
-  plaidTransactions, 
-  transactionCategories, 
-  budgetCategories, 
+import {
+  plaidTransactions,
+  transactionCategories,
+  budgetCategories,
   plaidAccounts,
   budgets,
   slackOAuth,
-  fundMovements
+  fundMovements,
+  monthEndState,
+  monthlySnapshots
 } from '../db/schema';
-import { eq, and, gte, lte, sql, isNull, or } from 'drizzle-orm';
+import { eq, and, gte, lte, sql, isNull, or, ne, desc } from 'drizzle-orm';
 import { createSlackClient } from './slack';
 import { getUserAccessToken, getNotificationChannel } from './slack-oauth';
 import { assignTransactionCategory } from './transactions';
 
 /**
- * Calculate spending stats for a category in the current month
+ * Calculate spending stats for a category in a given month.
+ * If year/month not provided, defaults to current month.
  */
 export async function getCategorySpendingStats(
   userId: number,
   budgetId: number,
-  categoryId: number
+  categoryId: number,
+  year?: number,
+  month?: number
 ): Promise<{
   spent: number;
   allotted: number;
   percentage: number;
 }> {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const y = year ?? now.getFullYear();
+  const m = month ?? (now.getMonth() + 1);
+  const startOfMonth = new Date(y, m - 1, 1);
+  const endOfMonth = new Date(y, m, 0, 23, 59, 59);
   const startDate = startOfMonth.toISOString().split('T')[0];
   const endDate = endOfMonth.toISOString().split('T')[0];
 
@@ -77,6 +84,21 @@ export async function sendTransactionNotification(
   categoryId: number | null
 ): Promise<void> {
   try {
+    // Notification blocking: suppress during active month-end processing
+    const [activeMonthEnd] = await db
+      .select()
+      .from(monthEndState)
+      .where(and(
+        eq(monthEndState.userId, userId),
+        ne(monthEndState.status, 'completed')
+      ))
+      .limit(1);
+
+    if (activeMonthEnd) {
+      console.log(`[NOTIFICATION] Month-end in progress for user ${userId}, suppressing notification for txn ${transactionId}`);
+      return; // Leave notificationSent = false so it can be sent later
+    }
+
     // Get user's Slack notification channel
     const notificationChannelId = await getNotificationChannel(userId);
     if (!notificationChannelId) {
@@ -352,118 +374,553 @@ export async function sendTransactionNotification(
 }
 
 /**
- * Send notification for Variable category surplus/deficit at month end
+ * Flush deferred notifications after month-end completes.
+ * Called from webhook/transaction sync handler — sends any unsent notifications
+ * for the current month if month-end is completed.
  */
-export async function sendVariableSurplusDeficitNotification(
+export async function flushDeferredNotifications(userId: number): Promise<void> {
+  try {
+    // Check if there's a completed month-end state (any month)
+    const [completedMonthEnd] = await db
+      .select()
+      .from(monthEndState)
+      .where(and(
+        eq(monthEndState.userId, userId),
+        eq(monthEndState.status, 'completed')
+      ))
+      .orderBy(desc(monthEndState.year), desc(monthEndState.month))
+      .limit(1);
+
+    // If no completed month-end, or there's still an active one, skip
+    const [activeMonthEnd] = await db
+      .select()
+      .from(monthEndState)
+      .where(and(
+        eq(monthEndState.userId, userId),
+        ne(monthEndState.status, 'completed')
+      ))
+      .limit(1);
+
+    if (activeMonthEnd) {
+      return; // Still in progress, don't flush
+    }
+
+    if (!completedMonthEnd) {
+      return; // No completed month-end to flush after
+    }
+
+    // Find unsent notifications for this user
+    const unsentTransactions = await db
+      .select({ id: plaidTransactions.id })
+      .from(plaidTransactions)
+      .where(and(
+        eq(plaidTransactions.userId, userId),
+        eq(plaidTransactions.notificationSent, false),
+        eq(plaidTransactions.isReviewed, false)
+      ))
+      .limit(50); // Process in batches
+
+    if (unsentTransactions.length === 0) {
+      return;
+    }
+
+    console.log(`[NOTIFICATION] Flushing ${unsentTransactions.length} deferred notifications for user ${userId}`);
+
+    for (const txn of unsentTransactions) {
+      // Get the category assignment for this transaction
+      const [catAssignment] = await db
+        .select({ categoryId: transactionCategories.categoryId })
+        .from(transactionCategories)
+        .where(eq(transactionCategories.transactionId, txn.id))
+        .limit(1);
+
+      await sendTransactionNotification(userId, txn.id, catAssignment?.categoryId || null);
+    }
+  } catch (error: any) {
+    console.error(`[NOTIFICATION] Error flushing deferred notifications for user ${userId}:`, error);
+  }
+}
+
+/**
+ * Send a deficit notification with buttons for ONE set at a time.
+ * Updates monthEndState with message ts/channel for later updates.
+ */
+export async function sendDeficitNotification(
   userId: number,
-  variableCategoryId: number,
-  movementType: 'surplus' | 'deficit',
-  amount: number,
+  categoryId: number,
+  position: { categoryName: string; previousRollover: number; allotment: number; spent: number; netPosition: number },
+  remainingDeficit: number,
+  buttonSet: number,
   year: number,
   month: number
 ): Promise<void> {
   try {
-    // Get user's Slack notification channel
     const notificationChannelId = await getNotificationChannel(userId);
     if (!notificationChannelId) {
-      console.log(`No Slack notification channel configured for user ${userId}`);
+      console.log(`[MONTH-END] No Slack channel for user ${userId}, auto-advancing`);
+      // No Slack — go into debt and advance
+      const { handleDebtButtonPress } = await import('./month-end');
+      await handleDebtButtonPress(userId);
       return;
     }
 
-    // Get user's access token
     const accessToken = await getUserAccessToken(userId);
     if (!accessToken) {
-      console.log(`No Slack access token for user ${userId}`);
-      return;
-    }
-
-    // Get budget
-    const [budget] = await db
-      .select()
-      .from(budgets)
-      .where(and(
-        eq(budgets.userId, userId),
-        eq(budgets.isActive, true)
-      ))
-      .limit(1);
-
-    if (!budget) {
-      console.error(`[NOTIFICATION] No active budget for user ${userId}`);
-      return;
-    }
-
-    // Get variable category
-    const [variableCategory] = await db
-      .select()
-      .from(budgetCategories)
-      .where(and(
-        eq(budgetCategories.id, variableCategoryId),
-        eq(budgetCategories.budgetId, budget.id)
-      ))
-      .limit(1);
-
-    if (!variableCategory) {
-      console.error(`Variable category ${variableCategoryId} not found`);
-      return;
-    }
-
-    // Get all savings categories for buttons
-    const savingsCategories = await db
-      .select()
-      .from(budgetCategories)
-      .where(and(
-        eq(budgetCategories.budgetId, budget.id),
-        eq(budgetCategories.categoryType, 'savings')
-      ));
-
-    if (savingsCategories.length === 0) {
-      console.log(`No savings categories found for user ${userId}`);
+      console.log(`[MONTH-END] No Slack token for user ${userId}, auto-advancing`);
+      const { handleDebtButtonPress } = await import('./month-end');
+      await handleDebtButtonPress(userId);
       return;
     }
 
     const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
-    const messageText = movementType === 'surplus'
-      ? `💰 *${variableCategory.name}* has a *surplus* of $${amount.toFixed(2)} for ${monthName} ${year}.\n\nWhere would you like to move this surplus?`
-      : `⚠️ *${variableCategory.name}* has a *deficit* of $${amount.toFixed(2)} for ${monthName} ${year}.\n\nWhich savings category should cover this deficit?`;
 
-    // Create buttons for each savings category
-    const buttons = savingsCategories.slice(0, 5).map(cat => ({
-      type: 'button' as const,
-      text: {
-        type: 'plain_text' as const,
-        text: cat.name
-      },
-      value: `move_${movementType}_${variableCategoryId}_${cat.id}_${year}_${month}_${amount.toFixed(2)}`,
-      action_id: `variable_${movementType}_move`
-    }));
+    // Build breakdown text
+    const breakdownLines: string[] = [
+      `*${position.categoryName}* — ${monthName} ${year} Deficit`,
+      '',
+      `Allotment: $${position.allotment.toFixed(2)}`,
+      `Spent: $${position.spent.toFixed(2)}`,
+    ];
+
+    if (position.previousRollover > 0) {
+      breakdownLines.push(`Rollover applied: +$${position.previousRollover.toFixed(2)}`);
+    } else if (position.previousRollover < 0) {
+      breakdownLines.push(`Debt carried: -$${Math.abs(position.previousRollover).toFixed(2)}`);
+    }
+
+    breakdownLines.push(`*Net deficit: $${remainingDeficit.toFixed(2)}*`);
+
+    // Get budget for sources
+    const [budget] = await db
+      .select()
+      .from(budgets)
+      .where(and(eq(budgets.userId, userId), eq(budgets.isActive, true)))
+      .limit(1);
+
+    if (!budget) return;
+
+    const { getAvailableSources } = await import('./month-end');
+    const sources = await getAvailableSources(budget.id, userId, year, month, categoryId, buttonSet);
+
+    const blocks: any[] = [
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: breakdownLines.join('\n') }
+      }
+    ];
+
+    // Set header
+    const setHeaders: Record<number, string> = {
+      1: 'Choose from variable category surplus:',
+      2: 'Choose from variable category rollover:',
+      3: 'Choose from savings:',
+      4: 'No more sources available.',
+    };
+
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: setHeaders[buttonSet] || '' }
+    });
+
+    if (sources.length > 0) {
+      // Build buttons for sources (max 5 per action block)
+      const buttons: any[] = sources.map((source, i) => ({
+        type: 'button',
+        text: { type: 'plain_text', text: `${source.categoryName} ($${source.availableAmount.toFixed(2)})` },
+        value: JSON.stringify({
+          sourceCategoryId: source.categoryId,
+          sourceType: source.sourceType,
+          amount: source.availableAmount,
+        }),
+        action_id: `month_end_deficit_cover_${i}`,
+      }));
+
+      // Split into action blocks of 5
+      for (let i = 0; i < buttons.length; i += 5) {
+        blocks.push({
+          type: 'actions',
+          elements: buttons.slice(i, i + 5),
+        });
+      }
+    }
+
+    // Always show "Skip set" and "Go into debt" buttons
+    const controlButtons: any[] = [];
+    if (buttonSet < 4 && sources.length > 0) {
+      controlButtons.push({
+        type: 'button',
+        text: { type: 'plain_text', text: 'Skip to next set' },
+        value: 'skip_set',
+        action_id: 'month_end_skip_set',
+      });
+    }
+    controlButtons.push({
+      type: 'button',
+      text: { type: 'plain_text', text: 'Go into debt' },
+      style: 'danger',
+      value: 'go_into_debt',
+      action_id: 'month_end_go_into_debt',
+    });
+
+    blocks.push({ type: 'actions', elements: controlButtons });
+
+    const slackClient = createSlackClient(accessToken);
+    const result = await slackClient.chat.postMessage({
+      channel: notificationChannelId,
+      text: `${position.categoryName}: $${remainingDeficit.toFixed(2)} deficit for ${monthName} ${year}`,
+      blocks: blocks as any,
+    });
+
+    // Store message ts and channel for later updates
+    await db
+      .update(monthEndState)
+      .set({
+        slackMessageTs: result.ts,
+        slackChannelId: notificationChannelId,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(monthEndState.userId, userId),
+        eq(monthEndState.status, 'in_progress')
+      ));
+
+    console.log(`[MONTH-END] Sent deficit notification for ${position.categoryName}`);
+  } catch (error: any) {
+    console.error(`[MONTH-END] Error sending deficit notification:`, error);
+  }
+}
+
+/**
+ * Update an existing deficit Slack message in-place after a button press.
+ */
+export async function updateDeficitMessage(
+  userId: number,
+  categoryId: number,
+  remainingDeficit: number,
+  buttonSet: number,
+  year: number,
+  month: number
+): Promise<void> {
+  try {
+    const [state] = await db
+      .select()
+      .from(monthEndState)
+      .where(and(
+        eq(monthEndState.userId, userId),
+        eq(monthEndState.status, 'in_progress')
+      ))
+      .limit(1);
+
+    if (!state?.slackMessageTs || !state?.slackChannelId) return;
+
+    const accessToken = await getUserAccessToken(userId);
+    if (!accessToken) return;
+
+    const [budget] = await db
+      .select()
+      .from(budgets)
+      .where(and(eq(budgets.userId, userId), eq(budgets.isActive, true)))
+      .limit(1);
+    if (!budget) return;
+
+    const [category] = await db
+      .select()
+      .from(budgetCategories)
+      .where(eq(budgetCategories.id, categoryId))
+      .limit(1);
+
+    const categoryName = category?.name || 'Unknown';
+    const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+
+    const { getAvailableSources } = await import('./month-end');
+    const sources = await getAvailableSources(budget.id, userId, year, month, categoryId, buttonSet);
+
+    const blocks: any[] = [
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*${categoryName}* — Remaining deficit: *$${remainingDeficit.toFixed(2)}*` }
+      }
+    ];
+
+    const setHeaders: Record<number, string> = {
+      1: 'Choose from variable category surplus:',
+      2: 'Choose from variable category rollover:',
+      3: 'Choose from savings:',
+      4: 'No more sources available.',
+    };
+
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: setHeaders[buttonSet] || '' }
+    });
+
+    if (sources.length > 0) {
+      const buttons: any[] = sources.map((source, i) => ({
+        type: 'button',
+        text: { type: 'plain_text', text: `${source.categoryName} ($${source.availableAmount.toFixed(2)})` },
+        value: JSON.stringify({
+          sourceCategoryId: source.categoryId,
+          sourceType: source.sourceType,
+          amount: source.availableAmount,
+        }),
+        action_id: `month_end_deficit_cover_${i}`,
+      }));
+
+      for (let i = 0; i < buttons.length; i += 5) {
+        blocks.push({ type: 'actions', elements: buttons.slice(i, i + 5) });
+      }
+    }
+
+    const controlButtons: any[] = [];
+    if (buttonSet < 4 && sources.length > 0) {
+      controlButtons.push({
+        type: 'button',
+        text: { type: 'plain_text', text: 'Skip to next set' },
+        value: 'skip_set',
+        action_id: 'month_end_skip_set',
+      });
+    }
+    controlButtons.push({
+      type: 'button',
+      text: { type: 'plain_text', text: 'Go into debt' },
+      style: 'danger',
+      value: 'go_into_debt',
+      action_id: 'month_end_go_into_debt',
+    });
+
+    blocks.push({ type: 'actions', elements: controlButtons });
+
+    const slackClient = createSlackClient(accessToken);
+    await slackClient.chat.update({
+      channel: state.slackChannelId,
+      ts: state.slackMessageTs,
+      text: `${categoryName}: $${remainingDeficit.toFixed(2)} remaining deficit`,
+      blocks: blocks as any,
+    });
+  } catch (error: any) {
+    console.error(`[MONTH-END] Error updating deficit message:`, error);
+  }
+}
+
+/**
+ * Send surplus notification — own rollover or savings category buttons.
+ */
+export async function sendSurplusNotification(
+  userId: number,
+  categoryId: number,
+  surplusAmount: number,
+  year: number,
+  month: number
+): Promise<void> {
+  try {
+    const notificationChannelId = await getNotificationChannel(userId);
+    if (!notificationChannelId) return;
+
+    const accessToken = await getUserAccessToken(userId);
+    if (!accessToken) return;
+
+    const [budget] = await db
+      .select()
+      .from(budgets)
+      .where(and(eq(budgets.userId, userId), eq(budgets.isActive, true)))
+      .limit(1);
+    if (!budget) return;
+
+    const [category] = await db
+      .select()
+      .from(budgetCategories)
+      .where(and(eq(budgetCategories.id, categoryId), eq(budgetCategories.budgetId, budget.id)))
+      .limit(1);
+    if (!category) return;
+
+    const savingsCategories = await db
+      .select()
+      .from(budgetCategories)
+      .where(and(eq(budgetCategories.budgetId, budget.id), eq(budgetCategories.categoryType, 'savings')));
+
+    const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
 
     const blocks: any[] = [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: messageText
+          text: `*${category.name}* has a surplus of *$${surplusAmount.toFixed(2)}* for ${monthName} ${year}.\n\nWhere would you like to move this surplus?`
         }
       }
     ];
 
-    if (buttons.length > 0) {
-      blocks.push({
-        type: 'actions',
-        elements: buttons
-      } as any);
+    // Own rollover button + savings category buttons
+    const buttons: any[] = [
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: 'Keep as rollover' },
+        style: 'primary',
+        value: JSON.stringify({ targetCategoryId: categoryId }),
+        action_id: 'month_end_surplus_rollover',
+      },
+    ];
+
+    for (const sav of savingsCategories.slice(0, 4)) {
+      buttons.push({
+        type: 'button',
+        text: { type: 'plain_text', text: sav.name },
+        value: JSON.stringify({ targetCategoryId: sav.id }),
+        action_id: `month_end_surplus_move_${sav.id}`,
+      });
     }
+
+    // Split into action blocks of 5
+    for (let i = 0; i < buttons.length; i += 5) {
+      blocks.push({ type: 'actions', elements: buttons.slice(i, i + 5) });
+    }
+
+    const slackClient = createSlackClient(accessToken);
+    const result = await slackClient.chat.postMessage({
+      channel: notificationChannelId,
+      text: `${category.name}: $${surplusAmount.toFixed(2)} surplus for ${monthName} ${year}`,
+      blocks: blocks as any,
+    });
+
+    // Store message ts/channel
+    await db
+      .update(monthEndState)
+      .set({
+        slackMessageTs: result.ts,
+        slackChannelId: notificationChannelId,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(monthEndState.userId, userId), eq(monthEndState.status, 'in_progress')));
+
+    console.log(`[MONTH-END] Sent surplus notification for ${category.name}`);
+  } catch (error: any) {
+    console.error(`[MONTH-END] Error sending surplus notification:`, error);
+  }
+}
+
+/**
+ * Send a rich month-end summary message.
+ */
+export async function sendMonthEndSummary(
+  userId: number,
+  budgetId: number,
+  year: number,
+  month: number
+): Promise<void> {
+  try {
+    const notificationChannelId = await getNotificationChannel(userId);
+    if (!notificationChannelId) return;
+
+    const accessToken = await getUserAccessToken(userId);
+    if (!accessToken) return;
+
+    const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+
+    // Get all snapshots for this month
+    const snapshots = await db
+      .select()
+      .from(monthlySnapshots)
+      .where(and(
+        eq(monthlySnapshots.userId, userId),
+        eq(monthlySnapshots.budgetId, budgetId),
+        eq(monthlySnapshots.year, year),
+        eq(monthlySnapshots.month, month)
+      ));
+
+    // Get category details for names and types
+    const allCategories = await db
+      .select()
+      .from(budgetCategories)
+      .where(eq(budgetCategories.budgetId, budgetId));
+
+    const catMap = new Map(allCategories.map(c => [c.id, c]));
+
+    // Get budget income
+    const [budget] = await db
+      .select()
+      .from(budgets)
+      .where(eq(budgets.id, budgetId))
+      .limit(1);
+
+    const income = parseFloat(budget?.income || '0');
+
+    let totalSpent = 0;
+    let totalAllotted = 0;
+    const lines: string[] = [];
+
+    // Variable categories
+    const variableSnapshots = snapshots.filter(s => catMap.get(s.categoryId)?.categoryType === 'variable');
+    if (variableSnapshots.length > 0) {
+      lines.push('*Variable Categories:*');
+      for (const snap of variableSnapshots) {
+        const cat = catMap.get(snap.categoryId);
+        const spent = parseFloat(snap.spent);
+        const allotment = parseFloat(snap.allotment);
+        const withinBudget = spent <= allotment;
+        const pct = allotment > 0 ? ((spent / allotment) * 100).toFixed(0) : '0';
+        const icon = withinBudget ? '✅' : '❌';
+        lines.push(`${icon} ${cat?.name}: $${spent.toFixed(2)} / $${allotment.toFixed(2)} (${pct}%)`);
+        totalSpent += spent;
+        totalAllotted += allotment;
+      }
+      lines.push('');
+    }
+
+    // Fixed categories
+    const fixedSnapshots = snapshots.filter(s => catMap.get(s.categoryId)?.categoryType === 'fixed');
+    if (fixedSnapshots.length > 0) {
+      lines.push('*Fixed Categories:*');
+      for (const snap of fixedSnapshots) {
+        const cat = catMap.get(snap.categoryId);
+        const spent = parseFloat(snap.spent);
+        const allotment = parseFloat(snap.allotment);
+        const rollover = parseFloat(snap.finalRolloverBalance);
+        lines.push(`${cat?.name}: $${spent.toFixed(2)} / $${allotment.toFixed(2)} (rollover: $${rollover.toFixed(2)})`);
+        totalSpent += spent;
+        totalAllotted += allotment;
+      }
+      lines.push('');
+    }
+
+    // Savings categories
+    const savingsSnapshots = snapshots.filter(s => catMap.get(s.categoryId)?.categoryType === 'savings');
+    if (savingsSnapshots.length > 0) {
+      lines.push('*Savings:*');
+      for (const snap of savingsSnapshots) {
+        const cat = catMap.get(snap.categoryId);
+        const balance = parseFloat(snap.finalRolloverBalance);
+        lines.push(`${cat?.name}: $${balance.toFixed(2)}`);
+      }
+      lines.push('');
+    }
+
+    // Summary totals
+    lines.push('*Summary:*');
+    lines.push(`Income: $${income.toFixed(2)}`);
+    lines.push(`Total spent: $${totalSpent.toFixed(2)}`);
+    lines.push(`Total allotted: $${totalAllotted.toFixed(2)}`);
+
+    const blocks: any[] = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: `📊 ${monthName} ${year} Month-End Summary` }
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: lines.join('\n') }
+      }
+    ];
 
     const slackClient = createSlackClient(accessToken);
     await slackClient.chat.postMessage({
       channel: notificationChannelId,
-      text: messageText,
+      text: `Month-End Summary: ${monthName} ${year}`,
       blocks: blocks as any,
     });
 
-    console.log(`Sent ${movementType} notification for category ${variableCategory.name}`);
+    console.log(`[MONTH-END] Sent summary for ${monthName} ${year}`);
   } catch (error: any) {
-    console.error(`Error sending ${movementType} notification:`, error);
+    console.error(`[MONTH-END] Error sending summary:`, error);
   }
 }
 

@@ -1,6 +1,6 @@
 import { db } from '../db';
-import { budgets, budgetCategories, plaidItems, plaidTransactions, transactionCategories } from '../db/schema';
-import { eq, and, gte, lte, sql } from 'drizzle-orm';
+import { budgets, budgetCategories, plaidItems, plaidTransactions, transactionCategories, monthlySnapshots } from '../db/schema';
+import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
 // Note: Transaction syncing is handled via the /transactions/sync endpoint and webhooks
 import { storeTransaction, assignTransactionCategory } from './transactions';
 import { categorizeTransaction } from './categorization';
@@ -11,14 +11,12 @@ const SYSTEM_CATEGORIES = {
     name: 'Surplus',
     categoryType: 'surplus',
     allocatedAmount: '0',
-    rolloverBalance: '0',
     color: '#28a745'
   },
   EXCLUDED: {
     name: 'Excluded',
     categoryType: 'excluded',
     allocatedAmount: '0',
-    rolloverBalance: '0',
     color: '#6c757d'
   }
 };
@@ -122,6 +120,25 @@ async function getUserBudgetId(userId: number): Promise<number | null> {
   return budget?.id || null;
 }
 
+/**
+ * Get the rollover balance for a category from the most recent monthly snapshot.
+ * Returns '0' if no snapshot exists (first month).
+ */
+export async function getRolloverBalance(categoryId: number, budgetId: number, userId: number): Promise<string> {
+  const [snapshot] = await db
+    .select({ finalRolloverBalance: monthlySnapshots.finalRolloverBalance })
+    .from(monthlySnapshots)
+    .where(and(
+      eq(monthlySnapshots.userId, userId),
+      eq(monthlySnapshots.budgetId, budgetId),
+      eq(monthlySnapshots.categoryId, categoryId)
+    ))
+    .orderBy(desc(monthlySnapshots.year), desc(monthlySnapshots.month))
+    .limit(1);
+
+  return snapshot?.finalRolloverBalance || '0';
+}
+
 export async function updateBudget(
   userId: number,
   updates: {
@@ -170,7 +187,6 @@ export async function createBudgetCategory(
   name: string,
   allocatedAmount: string,
   categoryType?: string,
-  rolloverBalance?: string,
   color?: string | null,
   // Variable category fields
   autoSurplusDestination?: string | null,
@@ -199,7 +215,6 @@ export async function createBudgetCategory(
       name,
       allocatedAmount,
       categoryType: categoryType || 'variable',
-      rolloverBalance: rolloverBalance || '0',
       color: color || null,
       autoSurplusDestination: autoSurplusDestination || null,
       expectedMerchantName: expectedMerchantName || null,
@@ -285,12 +300,14 @@ export async function getBudgetCategories(userId: number): Promise<Array<{
   // Calculate current month's spending for each category
   const spendingMap = await calculateCategorySpending(budgetId, userId);
 
-  // Update spentAmount for each category
-  const categoriesWithSpending = categories.map((category) => {
+  // Compute rollover from snapshots for each category
+  const categoriesWithSpending = await Promise.all(categories.map(async (category) => {
     const spentAmount = spendingMap.get(category.id) || 0;
-    const result = { 
-      ...category, 
-      spentAmount: spentAmount.toFixed(2)
+    const rolloverBalance = await getRolloverBalance(category.id, budgetId, userId);
+    const result = {
+      ...category,
+      spentAmount: spentAmount.toFixed(2),
+      rolloverBalance,
     };
     // Ensure all fields are present (handle potential null/undefined from database)
     if (result.isTaxDeductible === null || result.isTaxDeductible === undefined) {
@@ -303,7 +320,7 @@ export async function getBudgetCategories(userId: number): Promise<Array<{
       result.isUnconnectedAccount = false;
     }
     return result;
-  });
+  }));
 
   return categoriesWithSpending;
 }
@@ -334,7 +351,6 @@ export async function updateBudgetCategory(
     name?: string;
     allocatedAmount?: string;
     categoryType?: string;
-    rolloverBalance?: string;
     color?: string | null;
     // Variable category fields
     autoSurplusDestination?: string | null;

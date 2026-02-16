@@ -226,23 +226,6 @@
                             <h4>Savings Settings</h4>
                             
                             <div class="form-group">
-                              <label>
-                                Accumulated Total ($)
-                                <mat-icon matTooltip="The current total amount saved in this category year-to-date. This is the starting balance for tracking your savings progress." matTooltipPosition="above" class="info-icon">info</mat-icon>
-                              </label>
-                              <input 
-                                type="number" 
-                                [ngModel]="parseAmount(category.rolloverBalance || '0')" 
-                                (ngModelChange)="category.rolloverBalance = ($event !== null && $event !== undefined) ? $event.toString() : '0'"
-                                name="catAccum{{$index}}" 
-                                step="0.01" 
-                                min="0" 
-                                [disabled]="loading()" 
-                              />
-                              <small class="help-text">Current total saved in this category (year-to-date)</small>
-                            </div>
-
-                            <div class="form-group">
                               <label class="checkbox-label">
                                 <input 
                                   type="checkbox" 

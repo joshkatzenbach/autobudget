@@ -17,7 +17,7 @@ import {
 } from '../services/plaid';
 import { storeTransaction, assignTransactionCategory } from '../services/transactions';
 import { categorizeTransaction } from '../services/categorization';
-import { sendTransactionNotification } from '../services/slack-notifications';
+import { sendTransactionNotification, flushDeferredNotifications } from '../services/slack-notifications';
 import { encrypt, decrypt } from '../utils/encryption';
 
 const router = express.Router();
@@ -341,7 +341,14 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
       }
 
       console.log(`[SYNC] Webhook sync complete: ${totalAdded} added, ${totalModified} modified, ${totalRemoved} removed`);
-      
+
+      // Flush deferred notifications if month-end is completed
+      try {
+        await flushDeferredNotifications(plaidItem.userId);
+      } catch (flushError: any) {
+        console.error(`[NOTIFICATION] Error flushing deferred notifications:`, flushError);
+      }
+
       // Update webhook record as processed
       if (webhookRecordId) {
         await db

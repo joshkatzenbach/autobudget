@@ -8,7 +8,7 @@ import { assignTransactionCategory, updateTransactionCategories } from '../servi
 import { getBudgetCategories } from '../services/budgets';
 import { budgetCategories, budgets } from '../db/schema';
 import { db } from '../db';
-import { plaidTransactions, slackOAuth } from '../db/schema';
+import { plaidTransactions, slackOAuth, monthEndState } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getCategorySpendingStats } from '../services/slack-notifications';
 import * as dotenv from 'dotenv';
@@ -892,63 +892,153 @@ router.post('/interactive',
                   console.error(`Error marking transaction ${transactionId} as reviewed:`, error);
                 }
               }
-              } else if (action.action_id === 'variable_surplus_move' || action.action_id === 'variable_deficit_move') {
-                // Handle Variable category surplus/deficit movement
-                // value format: move_{surplus|deficit}_{variableCategoryId}_{targetCategoryId}_{year}_{month}_{amount}
-                const valueParts = action.value?.split('_') || [];
-                if (valueParts.length >= 7) {
-                  const movementType = valueParts[1] as 'surplus' | 'deficit';
-                  const variableCategoryId = parseInt(valueParts[2]);
-                  const targetCategoryId = parseInt(valueParts[3]);
-                  const year = parseInt(valueParts[4]);
-                  const month = parseInt(valueParts[5]);
-                  const amount = parseFloat(valueParts[6]);
+              } else if (action.action_id?.startsWith('month_end_')) {
+                // Month-end interactive handlers
+                try {
+                  // Look up user by Slack team ID (fixes old bug that matched on botUserId)
+                  const teamId = payload.user?.team_id || payload.team?.id;
+                  if (!teamId) {
+                    console.error('[MONTH-END] No team ID in Slack payload');
+                    continue;
+                  }
 
-                  if (!isNaN(variableCategoryId) && !isNaN(targetCategoryId) && !isNaN(amount)) {
-                    // Get userId from Slack user ID via OAuth
-                    const [oauth] = await db
-                      .select()
-                      .from(slackOAuth)
-                      .where(eq(slackOAuth.botUserId, payload.user.id))
-                      .limit(1);
+                  const [oauth] = await db
+                    .select()
+                    .from(slackOAuth)
+                    .where(eq(slackOAuth.teamId, teamId))
+                    .limit(1);
 
-                    if (oauth) {
-                      const { processVariableMovement } = await import('../services/month-end');
-                      await processVariableMovement(
-                        oauth.userId,
-                        variableCategoryId,
-                        targetCategoryId,
-                        movementType,
-                        amount,
-                        year,
-                        month
-                      );
+                  if (!oauth) {
+                    console.error(`[MONTH-END] No OAuth record for team ${teamId}`);
+                    continue;
+                  }
 
-                      // Update message to show confirmation
-                      const accessToken = await getUserAccessToken(oauth.userId);
+                  const meUserId = oauth.userId;
+
+                  if (action.action_id.startsWith('month_end_deficit_cover_')) {
+                    // Deficit coverage button — parse source info and apply
+                    const { sourceCategoryId, sourceType, amount } = JSON.parse(action.value);
+                    const { handleDeficitButtonPress } = await import('../services/month-end');
+                    const result = await handleDeficitButtonPress(meUserId, sourceCategoryId, sourceType, amount);
+
+                    if (result.advanced) {
+                      // Fully covered — update message to show confirmation
+                      const accessToken = await getUserAccessToken(meUserId);
                       if (accessToken && payload.message) {
                         const slackClient = createSlackClient(accessToken);
-                        const updatedText = movementType === 'surplus'
-                          ? `✅ Surplus of $${amount.toFixed(2)} moved to selected category.`
-                          : `✅ Deficit of $${amount.toFixed(2)} covered from selected category.`;
-
                         await slackClient.chat.update({
                           channel: payload.channel?.id || payload.message.channel,
                           ts: payload.message.ts,
-                          text: updatedText,
-                          blocks: [
-                            {
-                              type: 'section',
-                              text: {
-                                type: 'mrkdwn',
-                                text: updatedText
-                              }
-                            }
-                          ] as any
+                          text: 'Deficit fully covered!',
+                          blocks: [{
+                            type: 'section',
+                            text: { type: 'mrkdwn', text: '✅ *Deficit fully covered!* Moving to next category...' }
+                          }] as any,
                         });
                       }
+                    } else {
+                      // Partially covered — update message with remaining deficit and refreshed buttons
+                      const { updateDeficitMessage } = await import('../services/slack-notifications');
+                      const [state] = await db
+                        .select()
+                        .from(monthEndState)
+                        .where(and(eq(monthEndState.userId, meUserId), eq(monthEndState.status, 'in_progress')))
+                        .limit(1);
+
+                      if (state?.pendingCategoryId) {
+                        await updateDeficitMessage(
+                          meUserId,
+                          state.pendingCategoryId,
+                          result.remainingDeficit,
+                          state.currentButtonSet || 1,
+                          state.year,
+                          state.month
+                        );
+                      }
+                    }
+                  } else if (action.action_id === 'month_end_skip_set') {
+                    // Skip to next button set
+                    const [state] = await db
+                      .select()
+                      .from(monthEndState)
+                      .where(and(eq(monthEndState.userId, meUserId), eq(monthEndState.status, 'in_progress')))
+                      .limit(1);
+
+                    if (state?.pendingCategoryId) {
+                      const currentSet = state.currentButtonSet || 1;
+                      let nextSet = currentSet + 1;
+
+                      // Skip empty sets — find next set with sources, or jump to 4 for debt
+                      const { getAvailableSources } = await import('../services/month-end');
+                      while (nextSet < 4) {
+                        const sources = await getAvailableSources(
+                          state.budgetId, meUserId, state.year, state.month,
+                          state.pendingCategoryId, nextSet
+                        );
+                        if (sources.length > 0) break;
+                        nextSet++;
+                      }
+
+                      await db
+                        .update(monthEndState)
+                        .set({ currentButtonSet: nextSet, updatedAt: new Date() })
+                        .where(eq(monthEndState.id, state.id));
+
+                      const { updateDeficitMessage } = await import('../services/slack-notifications');
+                      await updateDeficitMessage(
+                        meUserId,
+                        state.pendingCategoryId,
+                        parseFloat(state.remainingAmount || '0'),
+                        nextSet,
+                        state.year,
+                        state.month
+                      );
+                    }
+                  } else if (action.action_id === 'month_end_go_into_debt') {
+                    const { handleDebtButtonPress } = await import('../services/month-end');
+                    await handleDebtButtonPress(meUserId);
+
+                    // Update message to show confirmation
+                    const accessToken = await getUserAccessToken(meUserId);
+                    if (accessToken && payload.message) {
+                      const slackClient = createSlackClient(accessToken);
+                      await slackClient.chat.update({
+                        channel: payload.channel?.id || payload.message.channel,
+                        ts: payload.message.ts,
+                        text: 'Going into debt for remaining deficit.',
+                        blocks: [{
+                          type: 'section',
+                          text: { type: 'mrkdwn', text: '💳 *Going into debt for remaining deficit.* Moving to next category...' }
+                        }] as any,
+                      });
+                    }
+                  } else if (action.action_id === 'month_end_surplus_rollover' || action.action_id.startsWith('month_end_surplus_move_')) {
+                    const { targetCategoryId } = JSON.parse(action.value);
+                    const { handleSurplusButtonPress } = await import('../services/month-end');
+                    await handleSurplusButtonPress(meUserId, targetCategoryId);
+
+                    // Update message to show confirmation
+                    const accessToken = await getUserAccessToken(meUserId);
+                    if (accessToken && payload.message) {
+                      const slackClient = createSlackClient(accessToken);
+                      const isRollover = action.action_id === 'month_end_surplus_rollover';
+                      const confirmText = isRollover
+                        ? '✅ *Surplus kept as rollover.* Moving to next category...'
+                        : `✅ *Surplus moved to ${action.text?.text || 'savings'}.* Moving to next category...`;
+
+                      await slackClient.chat.update({
+                        channel: payload.channel?.id || payload.message.channel,
+                        ts: payload.message.ts,
+                        text: confirmText.replace(/\*/g, ''),
+                        blocks: [{
+                          type: 'section',
+                          text: { type: 'mrkdwn', text: confirmText }
+                        }] as any,
+                      });
                     }
                   }
+                } catch (error: any) {
+                  console.error('[MONTH-END] Error handling interactive action:', error);
                 }
               } else if (action.action_id?.startsWith('transaction_category_')) {
                 // User clicked a category button
