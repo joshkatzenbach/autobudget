@@ -36,6 +36,13 @@
       "when": 1738300000000,
       "tag": "0004_add_notification_sent_column",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1739600000000,
+      "tag": "0005_drop_spent_amount_column",
+      "breakpoints": true
     }
   ]
 }

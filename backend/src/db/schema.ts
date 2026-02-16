@@ -41,7 +41,6 @@ export const budgetCategories = pgTable('budget_categories', {
   budgetId: integer('budget_id').notNull().references(() => budgets.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
   allocatedAmount: decimal('allocated_amount', { precision: 10, scale: 2 }).notNull(), // Amount to spend/allocate per month (same for all category types)
-  spentAmount: decimal('spent_amount', { precision: 10, scale: 2 }).default('0').notNull(),
   categoryType: varchar('category_type', { length: 50 }).notNull().default('variable'), // 'fixed', 'savings', 'variable', 'surplus', 'excluded'
   rolloverBalance: decimal('rollover_balance', { precision: 10, scale: 2 }).default('0').notNull(), // For Savings/Surplus/Fixed - tracks rollover balance
   color: varchar('color', { length: 7 }), // Hex color code for category (e.g., #FF5733)

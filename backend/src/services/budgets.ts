@@ -39,7 +39,6 @@ async function ensureSystemCategories(budgetId: number) {
     await db.insert(budgetCategories).values({
       budgetId,
       ...SYSTEM_CATEGORIES.SURPLUS,
-      spentAmount: '0',
     });
   }
 
@@ -57,7 +56,6 @@ async function ensureSystemCategories(budgetId: number) {
     await db.insert(budgetCategories).values({
       budgetId,
       ...SYSTEM_CATEGORIES.EXCLUDED,
-      spentAmount: '0',
     });
   }
 }
@@ -200,7 +198,6 @@ export async function createBudgetCategory(
       budgetId,
       name,
       allocatedAmount,
-      spentAmount: '0',
       categoryType: categoryType || 'variable',
       rolloverBalance: rolloverBalance || '0',
       color: color || null,
@@ -336,7 +333,6 @@ export async function updateBudgetCategory(
   updates: {
     name?: string;
     allocatedAmount?: string;
-    spentAmount?: string;
     categoryType?: string;
     rolloverBalance?: string;
     color?: string | null;

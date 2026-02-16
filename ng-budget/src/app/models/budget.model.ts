@@ -82,7 +82,6 @@ export interface CreateBudgetCategoryRequest {
 export interface UpdateBudgetCategoryRequest {
   name?: string;
   allocatedAmount?: string;
-  spentAmount?: string;
   categoryType?: CategoryType;
   rolloverBalance?: string;
   color?: string | null;

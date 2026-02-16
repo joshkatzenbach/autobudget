@@ -197,7 +197,6 @@ router.put('/categories/:categoryId', async (req: AuthRequest, res: Response) =>
     const {
       name,
       allocatedAmount,
-      spentAmount,
       categoryType,
       rolloverBalance,
       color,
@@ -215,7 +214,6 @@ router.put('/categories/:categoryId', async (req: AuthRequest, res: Response) =>
     const category = await updateBudgetCategory(categoryId, req.userId!, {
       name,
       allocatedAmount,
-      spentAmount,
       categoryType,
       rolloverBalance,
       color,
