@@ -3,14 +3,13 @@ import crypto from 'crypto';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { verifySlackWebhook } from '../middleware/slack-webhook-verification';
 import { sendMessage, createChannel, authTest, listChannels, listUsers, joinChannel, createGroupDM, getConversationMembers, createSlackClient } from '../services/slack';
-import { exchangeCodeForToken, storeOAuthTokens, getUserAccessToken, getUserOAuth, updateNotificationChannel, getNotificationChannel } from '../services/slack-oauth';
-import { storeMessage, processIncomingMessage, updateMessageStatus } from '../services/slack-messages';
+import { exchangeCodeForToken, storeOAuthTokens, getUserAccessToken, getUserOAuth, updateNotificationChannel, getNotificationChannel, deleteUserOAuth } from '../services/slack-oauth';
 import { assignTransactionCategory, updateTransactionCategories } from '../services/transactions';
 import { getBudgetCategories } from '../services/budgets';
 import { budgetCategories, budgets } from '../db/schema';
 import { db } from '../db';
-import { slackMessages, plaidTransactions, slackOAuth } from '../db/schema';
-import { eq, desc, and } from 'drizzle-orm';
+import { plaidTransactions, slackOAuth } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 import { getCategorySpendingStats } from '../services/slack-notifications';
 import * as dotenv from 'dotenv';
 
@@ -168,22 +167,7 @@ router.post('/events',
           // Handle message events
           if (event.type === 'message' && !event.subtype) {
             // Regular message (not a bot message, thread reply, etc.)
-            const responseMessage = await processIncomingMessage({
-              type: event.type,
-              user: event.user,
-              channel: event.channel,
-              text: event.text,
-              ts: event.ts,
-              thread_ts: event.thread_ts,
-            });
-
-            // If there's a response message, send it back
-            if (responseMessage) {
-              // Get user's access token to send response
-              // Note: This requires finding the user by Slack team/channel
-              // For now, we'll skip auto-responses
-              // TODO: Implement auto-response logic
-            }
+            // TODO: Add command processing logic here
           }
 
           // Handle app mentions
@@ -1201,25 +1185,50 @@ router.post('/interactive',
 router.use(authenticateToken);
 
 /**
- * GET /api/slack/messages
- * Get user's message history
+ * DELETE /api/slack/oauth
+ * Disconnect Slack workspace — revokes token, resets unreviewed notifications, deletes OAuth record
  */
-router.get('/messages', async (req: AuthRequest, res: Response) => {
+router.delete('/oauth', async (req: AuthRequest, res: Response) => {
   try {
     if (!req.userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const messages = await db
-      .select()
-      .from(slackMessages)
-      .where(eq(slackMessages.userId, req.userId))
-      .orderBy(desc(slackMessages.createdAt));
+    // Best-effort: revoke the Slack token
+    const accessToken = await getUserAccessToken(req.userId);
+    if (accessToken) {
+      try {
+        await fetch('https://slack.com/api/auth.revoke', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        });
+      } catch (revokeError: any) {
+        console.error('Error revoking Slack token (best-effort):', revokeError);
+      }
+    }
 
-    res.json(messages);
+    // Reset notificationSent for unreviewed transactions so they get re-notified on reconnect
+    await db
+      .update(plaidTransactions)
+      .set({ notificationSent: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(plaidTransactions.userId, req.userId),
+          eq(plaidTransactions.notificationSent, true),
+          eq(plaidTransactions.isReviewed, false)
+        )
+      );
+
+    // Delete the OAuth record
+    await deleteUserOAuth(req.userId);
+
+    res.json({ ok: true });
   } catch (error: any) {
-    console.error('Error getting messages:', error);
-    res.status(500).json({ error: 'Failed to get messages' });
+    console.error('Error disconnecting Slack:', error);
+    res.status(500).json({ error: error.message || 'Failed to disconnect Slack' });
   }
 });
 
@@ -1259,22 +1268,6 @@ router.post('/send', async (req: AuthRequest, res: Response) => {
 
     // Send message via Slack API
     const messageTs = await sendMessage(accessToken, targetChannelId, message, threadTs);
-
-    // Store outbound message in database
-    try {
-      await storeMessage({
-        userId: req.userId,
-        direction: 'outbound',
-        channelId: targetChannelId,
-        messageBody: message,
-        messageTs: messageTs,
-        threadTs: threadTs || null,
-        status: 'sent',
-      });
-    } catch (error: any) {
-      console.error('Error storing outbound message:', error);
-      // Don't fail the request if storage fails
-    }
 
     res.json({
       success: true,

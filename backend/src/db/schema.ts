@@ -128,22 +128,6 @@ export const monthlyCategorySummaries = pgTable('monthly_category_summaries', {
   uniqueUserBudgetCategoryMonth: unique().on(table.userId, table.budgetId, table.categoryId, table.year, table.month),
 }));
 
-export const slackMessages = pgTable('slack_messages', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }), // Nullable for incoming from unknown users
-  direction: varchar('direction', { length: 10 }).notNull(), // 'inbound' or 'outbound'
-  fromUserId: varchar('from_user_id', { length: 50 }), // Slack user ID (nullable for bot messages)
-  toChannelId: varchar('to_channel_id', { length: 50 }), // Slack channel ID (for channel messages)
-  toUserId: varchar('to_user_id', { length: 50 }), // Slack user ID (for DMs)
-  channelId: varchar('channel_id', { length: 50 }), // Channel where message was sent/received
-  messageBody: text('message_body').notNull(), // Message content
-  messageTs: varchar('message_ts', { length: 50 }).unique(), // Slack message timestamp (unique identifier)
-  threadTs: varchar('thread_ts', { length: 50 }), // Thread timestamp if message is in a thread
-  status: varchar('status', { length: 20 }), // sent, delivered, failed, received, etc.
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
-
 export const slackOAuth = pgTable('slack_oauth', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),

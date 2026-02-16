@@ -40,6 +40,7 @@ export class SlackIntegrationComponent implements OnInit {
   loading = signal(false);
   loadingUsers = signal(false);
   saving = signal(false);
+  disconnecting = signal(false);
   sendingTest = signal(false);
   testMessage = signal('');
   error = signal<string | null>(null);
@@ -157,6 +158,29 @@ export class SlackIntegrationComponent implements OnInit {
         console.error('Error saving notification settings:', err);
         this.error.set(err.error?.error || 'Failed to save notification settings');
         this.saving.set(false);
+      }
+    });
+  }
+
+  disconnectSlack() {
+    if (!confirm('Are you sure you want to disconnect your Slack workspace? Unreviewed transaction notifications will be re-sent when you reconnect.')) {
+      return;
+    }
+
+    this.disconnecting.set(true);
+    this.error.set(null);
+    this.success.set(null);
+
+    this.slackService.disconnect().subscribe({
+      next: () => {
+        this.disconnecting.set(false);
+        this.success.set('Slack workspace disconnected.');
+        this.loadStatus();
+      },
+      error: (err) => {
+        console.error('Error disconnecting Slack:', err);
+        this.error.set(err.error?.error || 'Failed to disconnect Slack');
+        this.disconnecting.set(false);
       }
     });
   }

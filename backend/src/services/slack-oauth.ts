@@ -234,6 +234,15 @@ export async function updateNotificationChannel(userId: number, channelId: strin
 }
 
 /**
+ * Delete user's OAuth record (disconnect Slack)
+ */
+export async function deleteUserOAuth(userId: number) {
+  await db
+    .delete(slackOAuth)
+    .where(eq(slackOAuth.userId, userId));
+}
+
+/**
  * Get notification group DM channel ID
  */
 export async function getNotificationChannel(userId: number): Promise<string | null> {

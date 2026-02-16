@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
-import { SlackMessage, SendMessageRequest, CreateChannelRequest, CreateGroupDMRequest } from '../models/message.model';
+import { SendMessageRequest, CreateChannelRequest, CreateGroupDMRequest } from '../models/message.model';
 import { environment } from '../../environments/environment';
 
 @Injectable({
@@ -12,10 +12,6 @@ export class SlackService {
 
   sendMessage(request: SendMessageRequest): Observable<any> {
     return this.api.post('/slack/send', request);
-  }
-
-  getMessages(): Observable<SlackMessage[]> {
-    return this.api.get<SlackMessage[]>('/slack/messages');
   }
 
   createChannel(request: CreateChannelRequest): Observable<any> {
@@ -55,5 +51,8 @@ export class SlackService {
   updateNotificationSettings(userIds: string[]): Observable<any> {
     return this.api.post('/slack/integration/notifications', { userIds });
   }
-}
 
+  disconnect(): Observable<any> {
+    return this.api.delete('/slack/oauth');
+  }
+}

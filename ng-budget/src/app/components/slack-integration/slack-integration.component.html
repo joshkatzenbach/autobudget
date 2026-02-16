@@ -74,6 +74,13 @@
               <p><strong>User:</strong> {{ status()!.workspace!.user }}</p>
             </div>
           }
+          <button
+            class="btn-disconnect"
+            (click)="disconnectSlack()"
+            [disabled]="disconnecting()"
+          >
+            {{ disconnecting() ? 'Disconnecting...' : 'Disconnect' }}
+          </button>
         </div>
 
         <div class="notifications-section">

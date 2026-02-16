@@ -146,7 +146,6 @@ autobudget/
   - Last split automatically uses remaining amount
   - Validates amounts sum to transaction total
   - Updates original Slack message after successful split
-- **Message History**: All Slack messages stored in `slack_messages` table
 - **Webhook Endpoints**:
   - `/api/slack/events` - Receives Slack events (messages, mentions)
   - `/api/slack/interactive` - Handles button clicks and modal submissions
@@ -194,7 +193,6 @@ autobudget/
 - **transaction_category_overrides**: User manual overrides for LLM context
 - **monthly_category_summaries**: Aggregated monthly spending per category
 - **slack_oauth**: Slack OAuth tokens and notification channel IDs (encrypted)
-- **slack_messages**: Slack message history
 
 ### Key Relationships
 - One user → One budget (enforced by unique constraint)
@@ -252,7 +250,7 @@ autobudget/
 - `GET /oauth/callback` - OAuth callback
 - `POST /events` - Slack Events API webhook (public, signature verified)
 - `POST /interactive` - Slack Interactive Components webhook (public, signature verified)
-- `GET /messages` - Get message history
+- `DELETE /oauth` - Disconnect Slack workspace
 - `POST /send` - Send message to Slack
 - `POST /channels/create` - Create Slack channel
 - `GET /auth/test` - Test Slack authentication
