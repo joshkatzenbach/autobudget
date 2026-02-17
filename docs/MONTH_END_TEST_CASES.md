@@ -83,7 +83,7 @@ After all variable deficits are resolved, the system advances to fixed deficits.
 
 **Expected Slack message:** Rent is $100 over budget. Shows Set 3 buttons (savings — fixed categories skip Sets 1-2 since they can't pull from variable categories).
 
-**Note:** Fixed deficits go straight to Set 3 (savings) or Set 4 (debt). The button set behavior depends on implementation — it starts at Set 1 but the available sources function returns empty for Sets 1-2 for fixed categories since fixed categories don't pull from variable surplus/rollover.
+**Note:** Fixed deficits auto-skip to Set 3 (savings) or Set 4 (debt) because Sets 1-2 have no sources for fixed categories. The initial button set is determined by a loop that finds the first non-empty set — the same auto-skip pattern used when advancing between sets mid-flow.
 
 **Steps (option A — cover from savings):**
 1. Press **Emergency Fund** — transfers $100

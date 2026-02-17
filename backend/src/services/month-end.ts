@@ -327,21 +327,27 @@ export async function advanceMonthEnd(userId: number): Promise<void> {
 
       const position = await getCategoryNetPosition(cat.id, budgetId, userId, year, month);
       if (position.netPosition < -0.01) {
-        // Found a deficit — send notification and wait
+        // Found a deficit — find first non-empty button set
         const remainingDeficit = Math.abs(position.netPosition);
+        let startSet = 1;
+        while (startSet < 4) {
+          const sources = await getAvailableSources(budgetId, userId, year, month, cat.id, startSet);
+          if (sources.length > 0) break;
+          startSet++;
+        }
+
         await db
           .update(monthEndState)
           .set({
             pendingCategoryId: cat.id,
             remainingAmount: remainingDeficit.toFixed(2),
-            currentButtonSet: 1,
+            currentButtonSet: startSet,
             updatedAt: new Date(),
           })
           .where(eq(monthEndState.id, state.id));
 
-        // Import and send notification (Phase D will implement this)
         const { sendDeficitNotification } = await import('./slack-notifications');
-        await sendDeficitNotification(userId, cat.id, position, remainingDeficit, 1, year, month);
+        await sendDeficitNotification(userId, cat.id, position, remainingDeficit, startSet, year, month);
         return; // Wait for user interaction
       } else {
         // No deficit — mark as processed and continue
@@ -372,18 +378,25 @@ export async function advanceMonthEnd(userId: number): Promise<void> {
       const position = await getCategoryNetPosition(cat.id, budgetId, userId, year, month);
       if (position.netPosition < -0.01) {
         const remainingDeficit = Math.abs(position.netPosition);
+        let startSet = 1;
+        while (startSet < 4) {
+          const sources = await getAvailableSources(budgetId, userId, year, month, cat.id, startSet);
+          if (sources.length > 0) break;
+          startSet++;
+        }
+
         await db
           .update(monthEndState)
           .set({
             pendingCategoryId: cat.id,
             remainingAmount: remainingDeficit.toFixed(2),
-            currentButtonSet: 1,
+            currentButtonSet: startSet,
             updatedAt: new Date(),
           })
           .where(eq(monthEndState.id, state.id));
 
         const { sendDeficitNotification } = await import('./slack-notifications');
-        await sendDeficitNotification(userId, cat.id, position, remainingDeficit, 1, year, month);
+        await sendDeficitNotification(userId, cat.id, position, remainingDeficit, startSet, year, month);
         return;
       } else {
         processed.push(cat.id);
