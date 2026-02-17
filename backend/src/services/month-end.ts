@@ -212,8 +212,9 @@ export async function getAvailableSources(
     const savingsCategories = allCategories.filter(c => c.categoryType === 'savings');
     for (const cat of savingsCategories) {
       const rollover = parseFloat(await getRolloverBalance(cat.id, budgetId, userId));
+      const allotment = parseFloat(cat.allocatedAmount || '0');
       const movements = await getFundMovementTotals(userId, budgetId, cat.id, year, month);
-      const availableBalance = rollover - movements.surplusGiven + movements.deficitReceived;
+      const availableBalance = rollover + allotment - movements.surplusGiven + movements.deficitReceived;
       if (availableBalance > 0.01) {
         sources.push({
           categoryId: cat.id,

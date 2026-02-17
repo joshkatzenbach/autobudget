@@ -33,7 +33,7 @@ For each variable category where `netPosition < 0` (previousRollover + allotment
 4. Button sets advance automatically when current set is exhausted:
    - **Set 1**: Variable category surplus (adjusted position > 0)
    - **Set 2**: Variable category rollover (from previous snapshots)
-   - **Set 3**: Savings category balances
+   - **Set 3**: Savings category balances (rollover + current month's allotment)
    - **Set 4**: "Go into debt" (always available)
 5. User can skip sets or go into debt at any time
 
