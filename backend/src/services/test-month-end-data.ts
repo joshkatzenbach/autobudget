@@ -5,6 +5,7 @@ import {
   fundMovements,
   monthlySnapshots,
   monthEndState,
+  plaidItems,
   plaidTransactions,
   transactionCategories,
 } from '../db/schema';
@@ -155,6 +156,7 @@ export async function resetToTestState(userId: number) {
   }
 
   await db.delete(plaidTransactions).where(eq(plaidTransactions.userId, userId));
+  await db.delete(plaidItems).where(eq(plaidItems.userId, userId));
   await db.delete(monthlySnapshots).where(eq(monthlySnapshots.userId, userId));
 
   // 2. Delete existing budget (cascades budgetCategories) and create a fresh one
@@ -166,9 +168,18 @@ export async function resetToTestState(userId: number) {
   const newBudget = await createBudget(userId, 'Test Budget', '2026-01-01', '2026-01-31', '5000');
   const budgetId = newBudget.id;
 
-  // 2. Insert test categories
-  const categoryIdMap: Record<string, number> = {};
+  // 3. Create a test plaid item for transactions to reference
   const timestamp = Date.now();
+  const [testItem] = await db.insert(plaidItems).values({
+    userId,
+    itemId: `test-item-${timestamp}`,
+    accessToken: 'test-access-token',
+    institutionName: 'Test Bank',
+  }).returning({ id: plaidItems.id });
+  const testItemId = testItem.id;
+
+  // 4. Insert test categories
+  const categoryIdMap: Record<string, number> = {};
 
   for (const cat of TEST_CATEGORIES) {
     const [inserted] = await db.insert(budgetCategories).values({
@@ -195,7 +206,7 @@ export async function resetToTestState(userId: number) {
       const txn = cat.transactions[i];
       const [insertedTxn] = await db.insert(plaidTransactions).values({
         userId,
-        itemId: null,
+        itemId: testItemId,
         accountId: 'test-account-001',
         transactionId: `test-${cat.name.toLowerCase().replace(/\s+/g, '-')}-${i}-${timestamp}`,
         amount: txn.amount,
