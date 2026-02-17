@@ -8,8 +8,8 @@ import {
   plaidTransactions,
   transactionCategories,
 } from '../db/schema';
-import { eq, and, ne, inArray } from 'drizzle-orm';
-import { getUserBudget } from './budgets';
+import { eq, inArray } from 'drizzle-orm';
+import { getUserBudget, createBudget } from './budgets';
 
 // ── Test Category Definitions ────────────────────────────────────────────────
 
@@ -140,18 +140,10 @@ const TEST_CATEGORIES: TestCategory[] = [
 // ── Reset Logic ──────────────────────────────────────────────────────────────
 
 export async function resetToTestState(userId: number) {
-  const budget = await getUserBudget(userId);
-  if (!budget) throw new Error('No budget found for user. Create a budget first.');
-
-  const budgetId = budget.id;
-
-  // 1. Delete in FK-safe order
-  // monthEndState references budgetCategories via pendingCategoryId
+  // 1. Delete user-scoped rows that don't cascade from the budget
   await db.delete(monthEndState).where(eq(monthEndState.userId, userId));
-  // fundMovements references budgetCategories
   await db.delete(fundMovements).where(eq(fundMovements.userId, userId));
 
-  // Get all transaction IDs for this user to delete transactionCategories
   const userTxns = await db
     .select({ id: plaidTransactions.id })
     .from(plaidTransactions)
@@ -165,14 +157,14 @@ export async function resetToTestState(userId: number) {
   await db.delete(plaidTransactions).where(eq(plaidTransactions.userId, userId));
   await db.delete(monthlySnapshots).where(eq(monthlySnapshots.userId, userId));
 
-  // Delete non-system categories (keep 'surplus' and 'excluded')
-  await db.delete(budgetCategories).where(
-    and(
-      eq(budgetCategories.budgetId, budgetId),
-      ne(budgetCategories.categoryType, 'surplus'),
-      ne(budgetCategories.categoryType, 'excluded'),
-    )
-  );
+  // 2. Delete existing budget (cascades budgetCategories) and create a fresh one
+  const existingBudget = await getUserBudget(userId);
+  if (existingBudget) {
+    await db.delete(budgets).where(eq(budgets.id, existingBudget.id));
+  }
+
+  const newBudget = await createBudget(userId, 'Test Budget', '2026-01-01', '2026-01-31', '5000');
+  const budgetId = newBudget.id;
 
   // 2. Insert test categories
   const categoryIdMap: Record<string, number> = {};

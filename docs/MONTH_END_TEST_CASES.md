@@ -7,6 +7,8 @@ Manual test procedure for month-end processing using the test harness.
 1. Log in to the Angular app and navigate to `http://localhost:4200/test-month-end` (hidden route, not linked from navigation)
 2. Click **Reset to Test State** — verify the categories table shows all 11 categories with correct net positions
 
+**Note:** The reset is fully self-contained. It deletes the user's existing budget (cascading all categories), then creates a fresh "Test Budget" via `createBudget` (which auto-creates Surplus/Excluded system categories). No pre-existing budget is required — a user with no budget at all can use the test harness.
+
 ### Expected Categories After Reset
 
 | # | Name | Type | Allotted | Spent | Rollover | Net Position |
