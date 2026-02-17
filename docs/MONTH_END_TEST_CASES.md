@@ -1,12 +1,11 @@
 # Month-End Test Cases
 
-Manual test procedure for month-end processing using the test harness at `/api/test-month-end`.
+Manual test procedure for month-end processing using the test harness.
 
 ## Setup
 
-1. Open `http://localhost:3000/api/test-month-end` in a browser
-2. Paste your JWT token into the token field (get one from the login API or browser devtools)
-3. Click **Reset to Test State** — verify the categories table shows all 11 categories with correct net positions
+1. Log in to the Angular app and navigate to `http://localhost:4200/test-month-end` (hidden route, not linked from navigation)
+2. Click **Reset to Test State** — verify the categories table shows all 11 categories with correct net positions
 
 ### Expected Categories After Reset
 
@@ -176,7 +175,9 @@ After completing the first run, click **Reset to Test State** and run again with
 ## Cleanup
 
 When testing is complete, the test files can be safely deleted:
+- `ng-budget/src/app/components/test-month-end/` (entire directory)
 - `backend/src/services/test-month-end-data.ts`
 - `backend/src/routes/test-month-end.ts`
 - `docs/MONTH_END_TEST_CASES.md`
 - Remove the route registration line from `backend/src/server.ts`
+- Remove the `test-month-end` route from `ng-budget/src/app/app.routes.ts`

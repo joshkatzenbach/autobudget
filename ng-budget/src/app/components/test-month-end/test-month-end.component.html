@@ -1,0 +1,77 @@
+<div class="test-container">
+  <div class="test-card">
+    <h1>Month-End Test Harness</h1>
+
+    <div class="warning-text">
+      Warning: The Reset button will delete all transactions, categories (except Surplus/Excluded),
+      fund movements, snapshots, and month-end state for your account. Only use this in a development environment.
+    </div>
+
+    @if (error()) {
+      <div class="error-message">{{ error() }}</div>
+    }
+
+    @if (success()) {
+      <div class="success-message">{{ success() }}</div>
+    }
+
+    <div class="buttons">
+      <button
+        type="button"
+        class="btn btn-reset"
+        (click)="reset()"
+        [disabled]="loading()">
+        {{ loading() ? 'Loading...' : 'Reset to Test State' }}
+      </button>
+
+      <button
+        type="button"
+        class="btn btn-start"
+        (click)="startMonthEnd()"
+        [disabled]="loading()">
+        {{ loading() ? 'Loading...' : 'Start Month-End (Jan 2026)' }}
+      </button>
+
+      <button
+        type="button"
+        class="btn btn-state"
+        (click)="checkState()"
+        [disabled]="loading()">
+        {{ loading() ? 'Loading...' : 'Check Current State' }}
+      </button>
+    </div>
+
+    @if (output()) {
+      <div class="output">{{ output() }}</div>
+    }
+
+    @if (categories().length > 0) {
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Allotted</th>
+            <th>Spent</th>
+            <th>Rollover</th>
+            <th>Net Position</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of categories(); track c.id) {
+            <tr>
+              <td>{{ c.id }}</td>
+              <td>{{ c.name }}</td>
+              <td>{{ c.type }}</td>
+              <td>${{ c.allotted.toFixed(2) }}</td>
+              <td>${{ c.spent.toFixed(2) }}</td>
+              <td>${{ c.rollover.toFixed(2) }}</td>
+              <td [class]="netPositionClass(c.netPosition)">${{ c.netPosition.toFixed(2) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+</div>
