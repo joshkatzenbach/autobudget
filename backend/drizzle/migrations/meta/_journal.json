@@ -57,6 +57,13 @@
       "when": 1739800000000,
       "tag": "0007_month_end_rework_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1739900000000,
+      "tag": "0008_drop_is_pending_column",
+      "breakpoints": true
     }
   ]
 }

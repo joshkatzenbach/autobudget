@@ -106,7 +106,6 @@ export interface Transaction {
   date: string;
   plaidCategory: string | null;
   plaidCategoryId: string | null;
-  isPending: boolean;
   isReviewed: boolean;
   createdAt: string;
   updatedAt: string;

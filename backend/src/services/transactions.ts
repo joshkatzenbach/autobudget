@@ -14,7 +14,6 @@ export interface TransactionWithCategories {
   date: string;
   plaidCategory: string | null;
   plaidCategoryId: string | null;
-  isPending: boolean;
   isReviewed: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -39,8 +38,7 @@ export async function storeTransaction(
   name: string,
   date: string,
   plaidCategory: string | null,
-  plaidCategoryId: string | null,
-  isPending: boolean = false
+  plaidCategoryId: string | null
 ) {
   try {
     const [transaction] = await db
@@ -56,7 +54,6 @@ export async function storeTransaction(
         date,
         plaidCategory,
         plaidCategoryId,
-        isPending,
       })
       .returning();
 

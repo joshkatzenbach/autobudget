@@ -1,66 +1,67 @@
-# Pending-to-Posted Transaction Pattern
+# Posted-Only Transactions (formerly "Pending-to-Posted Pattern")
 
-## Background: How Plaid Transaction Sync Works
+## Current model: we only handle POSTED transactions
 
-Plaid's Sync API returns three lists per batch: `added`, `modified`, and `removed`. Each transaction has a unique `transaction_id` assigned by Plaid. When a purchase is first detected (e.g., a card swipe), Plaid creates a **pending** transaction. Once the merchant settles the charge (usually 1-3 days later), Plaid:
+As of the posted-only change, AutoBudget **ignores pending transactions entirely**. Ingestion
+stores and notifies only when a transaction has posted. There is no `is_pending` column and no
+pending-to-posted reconciliation logic.
+
+### How Plaid transaction sync works (background)
+
+Plaid's `/transactions/sync` returns three lists per batch: `added`, `modified`, and `removed`.
+Each transaction has a unique `transaction_id`. A purchase is first detected as a **pending**
+transaction; once the merchant settles (usually 1-3 days later), Plaid:
 
 1. Puts the old pending `transaction_id` in the `removed` list
-2. Puts a new posted transaction in the `added` list with a **different `transaction_id`**
-3. Sets `pending_transaction_id` on the posted transaction, linking it back to the original
+2. Puts a new posted transaction in `added` with a **different `transaction_id`**
+3. *Usually* sets `pending_transaction_id` on the posted transaction, linking it to the pending one
 
-This means from Plaid's perspective, pending and posted are two separate transactions with different IDs.
+So pending and posted are two separate transactions with different IDs.
 
-## Problem
+### What ingestion does now
 
-Our webhook sync processes `added` before `removed`. When a pending-to-posted transition occurs:
+In `processTransaction()` (both `backend/src/routes/plaid.ts` — the webhook path — and
+`backend/src/routes/transactions.ts` — the manual sync path):
 
-1. The posted transaction arrives in `added` — we'd create a brand new DB row with `notificationSent = false`
-2. The old pending transaction arrives in `removed` — we'd delete the old row (which had `notificationSent = true`)
+- **Guard at the top: `if (tx.pending) return;`** — pending transactions are dropped on the floor.
+  Nothing is stored, nothing is notified.
+- `added`/`modified` posted transactions are stored and (if not already notified) notified once.
+- The `removed` list is still processed: a removal for a pending `transaction_id` we never stored
+  is a harmless no-op; a removal of a real posted transaction (a reversal/correction) still deletes
+  the row, which is correct.
 
-Result: the user gets a second Slack notification for the same purchase.
+Net effect: each real purchase produces exactly **one** notification, when it posts.
 
-## Strategy: In-Place Row Update
+## Why we abandoned the in-place pending-to-posted approach
 
-Rather than delete-and-recreate, we **update the existing pending row in-place** when we detect a posted transaction that links back to it. This is the core paradigm:
+The previous design notified on the pending transaction, then updated the row in place when the
+posted version arrived **if** Plaid supplied `pending_transaction_id`. The fatal gap: per
+[Plaid's own docs](https://plaid.com/docs/transactions/transactions-data/), in some cases the
+posted transaction arrives **without** a `pending_transaction_id` (Plaid failed to match it). When
+that happened, the posted transaction looked brand-new → it was stored and **notified again**,
+then the original pending row was removed via the `removed` list. The result was a duplicate Slack
+notification with only **one** surviving DB row — invisible to any "duplicate rows" query, and
+observed heavily in production for certain institutions.
 
-- **Identity is our DB primary key (`id`), not Plaid's `transaction_id`** — the row's `id` stays the same, only the Plaid-facing `transactionId` column is swapped to the new posted ID
-- **Preserve user-facing state** — `notificationSent`, `isReviewed`, and any `transactionCategories` rows (which FK to `plaidTransactions.id`) all survive the transition untouched
-- **The `removed` processing becomes a no-op** — by the time we process the `removed` list, the old `pending_transaction_id` no longer exists in our DB (it was overwritten), so the `DELETE` affects zero rows harmlessly
+Plaid also explicitly warns that the pending and posted versions "may not necessarily share the
+same details: their name and amount may change" (e.g. a restaurant tip added at posting), so a
+content-based fallback match on amount/date/merchant is unreliable in both directions. Rather than
+chase an imperfect heuristic, we chose accuracy over immediacy: **only act on posted transactions.**
 
-## Where This Lives
+### Trade-off accepted
 
-`backend/src/routes/plaid.ts` → `processTransaction()` function, at the top of the `if (isNew)` block (the `added` transactions path).
+Notifications now arrive 1-5 business days later (when the charge posts) instead of at swipe time.
+The upside is correct, duplicate-free data and a much simpler ingestion path.
 
-The check runs before the normal `storeTransaction` call:
+### Residual risk
 
-1. If `tx.pending_transaction_id` is set, query for a row where `transactionId = tx.pending_transaction_id`
-2. If found → update in-place, return early
-3. If not found (or `pending_transaction_id` is null) → fall through to normal new-transaction flow
+Plaid can *rarely* remove and re-add a **posted** transaction with a new `transaction_id` (data
+corrections). That could still produce a single stray duplicate notification. It is far rarer than
+the pending churn and can be addressed later with a guard if it ever surfaces.
 
-## What Gets Updated vs. Preserved
+## Related
 
-| Field | Updated? | Reason |
-|---|---|---|
-| `transactionId` | Yes | New Plaid ID for the posted transaction |
-| `amount` | Yes | May differ slightly between pending and posted |
-| `merchantName`, `name` | Yes | May be refined when posted |
-| `date` | Yes | Settlement date may differ from authorization date |
-| `plaidCategory`, `plaidCategoryId` | Yes | Plaid may recategorize |
-| `isPending` | Yes (set to `false`) | Transaction is now posted |
-| `updatedAt` | Yes | Timestamp the update |
-| `notificationSent` | **No** | Prevents duplicate Slack notification |
-| `isReviewed` | **No** | Preserves user's review status |
-| `userId`, `itemId`, `accountId` | **No** | These don't change |
-| `id` (PK) | **No** | Keeps `transactionCategories` FKs intact |
-
-## Edge Cases
-
-- **Pending row was never notified** (e.g., no active budget at the time): `notificationSent` will be `false` on the existing row, so after the in-place update we call `categorizeAndNotify` to send the first notification.
-- **Pending row doesn't exist in our DB** (e.g., initial sync picked up the posted version directly): `pending_transaction_id` lookup returns nothing, normal new-transaction flow runs.
-- **Amount changes between pending and posted**: The amount column is updated, but any existing `transactionCategories` rows keep the old amount. This is acceptable because category re-assignment happens during notification, and if notification was already sent, the user can manually adjust via Slack.
-
-## Why Not Other Approaches
-
-- **Checking `notificationSent` on insert**: Doesn't work because the new row is a fresh insert with `notificationSent = false`.
-- **Deduplicating by merchant+amount+date**: Fragile — amounts and dates can change between pending and posted, and different transactions could have identical fields.
-- **Processing `removed` before `added`**: Would require reordering Plaid's sync results and still wouldn't link the two transactions together without `pending_transaction_id`.
+- Schema: `is_pending` column removed from `plaid_transactions` (migration
+  `0008_drop_is_pending_column.sql`, which also deletes any leftover pending rows).
+- Dedup of literal re-adds still relies on the `transaction_id` unique constraint in
+  `storeTransaction()` (`backend/src/services/transactions.ts`).

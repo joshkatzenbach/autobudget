@@ -76,6 +76,13 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
       // Helper function to process a transaction (added or modified)
       const processTransaction = async (tx: any, isNew: boolean) => {
         try {
+          // Posted-only model: ignore pending transactions entirely. We only
+          // store and notify once a transaction has posted, which avoids the
+          // pending->posted churn that produced duplicate notifications.
+          if (tx.pending) {
+            return;
+          }
+
           // Extract category information from Plaid transaction
           let plaidCategory: string | null = null;
           let plaidCategoryId: string | null = null;
@@ -94,43 +101,9 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
           const amountToStore = tx.amount.toString();
 
           if (isNew) {
-            // Check if this posted transaction replaces a pending one
-            if (tx.pending_transaction_id) {
-              const [pendingRow] = await db
-                .select()
-                .from(plaidTransactions)
-                .where(eq(plaidTransactions.transactionId, tx.pending_transaction_id))
-                .limit(1);
-
-              if (pendingRow) {
-                // Update the existing pending row in-place, preserving notificationSent, isReviewed, etc.
-                await db
-                  .update(plaidTransactions)
-                  .set({
-                    transactionId: tx.transaction_id,
-                    amount: amountToStore,
-                    merchantName: tx.merchant_name || null,
-                    name: tx.name,
-                    date: tx.date,
-                    plaidCategory,
-                    plaidCategoryId,
-                    isPending: false,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(plaidTransactions.id, pendingRow.id));
-
-                console.log(`[SYNC] Pending-to-posted: updated txn ${tx.pending_transaction_id} → ${tx.transaction_id} (notificationSent=${pendingRow.notificationSent})`);
-
-                // If the pending row was never notified, categorize and notify now
-                if (!pendingRow.notificationSent) {
-                  await categorizeAndNotify({ ...pendingRow, id: pendingRow.id }, tx);
-                }
-
-                return; // Skip normal new-transaction flow
-              }
-            }
-
-            // Store new transaction (storeTransaction handles duplicates atomically)
+            // Pending transactions are skipped above, so every "added" transaction
+            // here is posted. Store it and notify once. (storeTransaction handles
+            // duplicate transaction_ids atomically.)
             const storedTx = await storeTransaction(
               plaidItem.userId,
               plaidItem.id,
@@ -141,8 +114,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
               tx.name,
               tx.date,
               plaidCategory,
-              plaidCategoryId,
-              tx.pending || false
+              plaidCategoryId
             );
 
             console.log(`[SYNC] Stored transaction ${tx.transaction_id} (${tx.merchant_name || tx.name}, $${amountToStore})`);
@@ -171,11 +143,10 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                   date: tx.date,
                   plaidCategory,
                   plaidCategoryId,
-                  isPending: tx.pending || false,
                   updatedAt: new Date(),
                 })
                 .where(eq(plaidTransactions.transactionId, tx.transaction_id));
-              
+
               console.log(`[SYNC] Updated transaction ${tx.transaction_id}`);
             } else {
               // Modified transaction doesn't exist, treat as new
@@ -197,7 +168,6 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                     date: tx.date,
                     plaidCategory,
                     plaidCategoryId,
-                    isPending: tx.pending || false,
                     updatedAt: new Date(),
                   })
                   .where(eq(plaidTransactions.transactionId, tx.transaction_id));
@@ -214,8 +184,7 @@ router.post('/webhook', verifyPlaidWebhook, async (req: Request, res: Response) 
                 tx.name,
                 tx.date,
                 plaidCategory,
-                plaidCategoryId,
-                tx.pending || false
+                plaidCategoryId
               );
 
               // Check if notification has already been sent (prevents duplicate notifications)
@@ -798,8 +767,7 @@ router.post('/test/generate-transaction', async (req: AuthRequest, res: Response
       `${testMerchant} Purchase`,
       today,
       plaidCategory,
-      plaidCategoryId,
-      false
+      plaidCategoryId
     );
 
     // Get user's budget

@@ -180,6 +180,11 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
     // Helper function to process a transaction
     const processTransaction = async (tx: any, isNew: boolean, item: any) => {
       try {
+        // Posted-only model: ignore pending transactions entirely.
+        if (tx.pending) {
+          return;
+        }
+
         let plaidCategory: string | null = null;
         let plaidCategoryId: string | null = null;
         
@@ -207,8 +212,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
             tx.name,
             tx.date,
             plaidCategory,
-            plaidCategoryId,
-            tx.pending || false
+            plaidCategoryId
           );
 
           // Check if transaction already has a category (might be a duplicate)
@@ -273,7 +277,6 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                 date: tx.date,
                 plaidCategory,
                 plaidCategoryId,
-                isPending: tx.pending || false,
                 updatedAt: new Date(),
               })
               .where(eq(plaidTransactions.transactionId, tx.transaction_id));
@@ -297,7 +300,6 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
                   date: tx.date,
                   plaidCategory,
                   plaidCategoryId,
-                  isPending: tx.pending || false,
                   updatedAt: new Date(),
                 })
                 .where(eq(plaidTransactions.transactionId, tx.transaction_id));
@@ -314,8 +316,7 @@ router.post('/sync', async (req: AuthRequest, res: Response) => {
               tx.name,
               tx.date,
               plaidCategory,
-              plaidCategoryId,
-              tx.pending || false
+              plaidCategoryId
             );
 
             // Check if transaction already has a category before categorizing

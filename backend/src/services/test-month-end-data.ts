@@ -213,7 +213,6 @@ export async function resetToTestState(userId: number) {
         merchantName: txn.merchantName,
         name: txn.name,
         date: txn.date,
-        isPending: false,
         isReviewed: true,
         notificationSent: true,
       }).returning({ id: plaidTransactions.id });
